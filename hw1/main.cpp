@@ -16,6 +16,39 @@
 
 #define array_count(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+unsigned int random(unsigned int *rng_seed)
+{
+	unsigned int x = *rng_seed;
+	x ^= x << 6;
+	x ^= x >> 21;
+	x ^= x << 7;
+	*rng_seed = x;
+
+	return x;
+}
+
+struct StationLUT
+{
+	float r;
+	float g;
+	float b;
+
+	int w;
+	int h;
+};
+
+struct Station
+{
+	float r;
+	float g;
+	float b;
+
+	int x;
+	int y;
+	int w;
+	int h;
+};
+
 struct Font
 {
 	float  baseline_advance;
@@ -189,6 +222,43 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	Font  font     = load_font("c:/windows/fonts/arial.ttf");
 	float baseline = font.baseline_advance;
 
+	LARGE_INTEGER large_rng_seed;
+	QueryPerformanceCounter(&large_rng_seed);
+	unsigned int rng_seed = large_rng_seed.LowPart;
+
+	int map_w = 32;
+	int map_h = 32;
+
+	const int station_count = 4;
+
+	Station    stations[station_count]    = {};
+	StationLUT station_lut[station_count] = {
+		{0, 0, 1, 8, 8},
+		{0, 1, 0, 4, 4},
+		{0, 1, 1, 2, 2},
+		{1, 0, 0, 1, 1},
+	};
+
+	for(int station_idx = 0; station_idx < station_count; ++station_idx)
+	{
+		Station    *station = &stations[station_idx];
+		StationLUT  lut     = station_lut[station_idx];
+
+		float r = lut.r;
+		float g = lut.g;
+		float b = lut.b;
+		int   w = lut.w;
+		int   h = lut.h;
+
+		station->r = r;
+		station->g = g;
+		station->b = b;
+		station->x = random(&rng_seed) % (map_w - w);
+		station->y = random(&rng_seed) % (map_h - h);
+		station->w = w;
+		station->h = h;
+	}
+
 	uint64_t elapsed_microsecs = 0;
 
 	ShowWindow(window, SW_SHOW);
@@ -245,44 +315,34 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
 
-		int map_w = 32;
-		int map_h = 32;
-
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
 		glOrtho(0, map_w, map_h, 0, 0, 1);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
 
 		glDisable(GL_TEXTURE_2D);
 
 		glBegin(GL_QUADS);
+		for(int station_idx = 0; station_idx < station_count; ++station_idx)
 		{
-			for(int y = 0; y < map_h; ++y)
-			{
-				int remainder_to_check = 0;
-				if(y % 2 == 0)
-				{
-					remainder_to_check = 1;
-				}
+			Station *station = &stations[station_idx];
 
-				for(int x = 0; x < map_w; ++x)
-				{
-					if(x % 2 == remainder_to_check)
-					{
-						glColor3f(0, 0, 1);
-					}else
-					{
-						glColor3f(0, 1, 0);
-					}
+			float r = station->r;
+			float g = station->g;
+			float b = station->b;
 
-					float w = 1;
-					float h = 1;
+			int x = station->x;
+			int y = station->y;
+			int w = station->w;
+			int h = station->h;
 
-					glVertex2f(x,     y    );
-					glVertex2f(x + w, y    );
-					glVertex2f(x + w, y + h);
-					glVertex2f(x,     y + h);
-				}
-			}
+			glColor3f(r, g, b);
+
+			glVertex2f(x,     y    );
+			glVertex2f(x + w, y    );
+			glVertex2f(x + w, y + h);
+			glVertex2f(x,     y + h);
 		}
 		glEnd();
 
@@ -291,6 +351,8 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
 		glOrtho(0, client_w, client_h, 0, 0, 1);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
 
 		float dt = elapsed_microsecs / 1000000.0f;
 
@@ -314,5 +376,8 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	}
 
 exit:
+	wglDeleteContext(gl_ctx);
+	ReleaseDC(window, device_ctx);
+	DestroyWindow(window);
 	return 0;
 }
