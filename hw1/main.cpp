@@ -35,6 +35,9 @@ struct StationLUT
 
 	int w;
 	int h;
+
+	int door_offset_x;
+	int door_offset_y;
 };
 
 struct Station
@@ -47,6 +50,9 @@ struct Station
 	int y;
 	int w;
 	int h;
+
+	int door_offset_x;
+	int door_offset_y;
 };
 
 struct Font
@@ -107,9 +113,10 @@ void draw_text(Font *font, float x, float y, float r, float g, float b, char *te
 	glEnable(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_2D, font->texture);
 
+	glBegin(GL_QUADS);
+
 	glColor3f(r, g, b);
 
-	glBegin(GL_QUADS);
 	while(*text)
 	{
 		stbtt_aligned_quad quad;
@@ -121,6 +128,16 @@ void draw_text(Font *font, float x, float y, float r, float g, float b, char *te
 		glTexCoord2f(quad.s0, quad.t1); glVertex2f(quad.x0, quad.y1);
 	}
 	glEnd();
+}
+
+void draw_rect(float x, float y, float w, float h, float r, float g, float b)
+{
+	glColor3f(r, g, b);
+
+	glVertex2f(x,     y    );
+	glVertex2f(x + w, y    );
+	glVertex2f(x + w, y + h);
+	glVertex2f(x,     y + h);
 }
 
 void win_get_client_dim(HWND window, int *w, int *h)
@@ -213,8 +230,9 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		return 1;
 	}
 
-	LARGE_INTEGER frequency;
-	QueryPerformanceFrequency(&frequency);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_LIGHTING);
+	glDisable(GL_DEPTH_TEST);
 
 	int client_w, client_h;
 	win_get_client_dim(window, &client_w, &client_h);
@@ -226,17 +244,18 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	QueryPerformanceCounter(&large_rng_seed);
 	unsigned int rng_seed = large_rng_seed.LowPart;
 
-	int map_w = 32;
-	int map_h = 32;
+	const int map_w = 32;
+	const int map_h = 32;
+	int       map[map_h][map_w] = {};
 
 	const int station_count = 4;
 
 	Station    stations[station_count]    = {};
 	StationLUT station_lut[station_count] = {
-		{0, 0, 1, 8, 8},
-		{0, 1, 0, 4, 4},
-		{0, 1, 1, 2, 2},
-		{1, 0, 0, 1, 1},
+		{0, 0, 1, 8, 8,  4, -1},
+		{0, 1, 0, 4, 4,  4,  2},
+		{0, 1, 1, 2, 2,  1,  2},
+		{1, 0, 0, 1, 1, -1,  0},
 	};
 
 	for(int station_idx = 0; station_idx < station_count; ++station_idx)
@@ -247,19 +266,38 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		float r = lut.r;
 		float g = lut.g;
 		float b = lut.b;
-		int   w = lut.w;
-		int   h = lut.h;
+
+		int w = lut.w;
+		int h = lut.h;
+
+		// Account for door placement
+		int x = (random(&rng_seed) % (map_w - w - 2)) + 1;
+		int y = (random(&rng_seed) % (map_h - h - 2)) + 1;
+
+		for(int map_x = x; map_x < x + w; ++map_x)
+		{
+			for(int map_y = y; map_y < y + h; ++map_y)
+			{
+				map[map_y][map_x] = 1;
+			}
+		}
 
 		station->r = r;
 		station->g = g;
 		station->b = b;
-		station->x = random(&rng_seed) % (map_w - w);
-		station->y = random(&rng_seed) % (map_h - h);
+		station->x = x;
+		station->y = y;
 		station->w = w;
 		station->h = h;
+
+		station->door_offset_x = lut.door_offset_x;
+		station->door_offset_y = lut.door_offset_y;
 	}
 
 	uint64_t elapsed_microsecs = 0;
+
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
 
 	ShowWindow(window, SW_SHOW);
 
@@ -284,7 +322,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		win_get_client_dim(window, &client_w, &client_h);
 
-		glClearColor(0, 0, 0, 1);
+		glClearColor(0.1f, 0.1f, 0.1f, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		glEnable(GL_BLEND);
@@ -321,6 +359,19 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 
+		for(int station_a_idx = 0; station_a_idx < station_count; ++station_a_idx)
+		{
+			Station *station_a = &stations[station_a_idx];
+
+			for(int station_b_idx = station_a_idx; station_b_idx < station_count; ++station_b_idx)
+			{
+				if(station_a_idx != station_b_idx)
+				{
+					Station *station_b = &stations[station_b_idx];
+				}
+			}
+		}
+
 		glDisable(GL_TEXTURE_2D);
 
 		glBegin(GL_QUADS);
@@ -337,12 +388,17 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 			int w = station->w;
 			int h = station->h;
 
-			glColor3f(r, g, b);
+			draw_rect(x, y, w, h, r, g, b);
 
-			glVertex2f(x,     y    );
-			glVertex2f(x + w, y    );
-			glVertex2f(x + w, y + h);
-			glVertex2f(x,     y + h);
+			int door_x = x + station->door_offset_x;
+			int door_y = y + station->door_offset_y;
+			int door_w = 1;
+			int door_h = 1;
+			int door_r = 1;
+			int door_g = 1;
+			int door_b = 1;
+
+			draw_rect(door_x, door_y, door_w, door_h, door_r, door_g, door_b);
 		}
 		glEnd();
 
@@ -376,8 +432,5 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	}
 
 exit:
-	wglDeleteContext(gl_ctx);
-	ReleaseDC(window, device_ctx);
-	DestroyWindow(window);
 	return 0;
 }
