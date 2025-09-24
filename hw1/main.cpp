@@ -1,9 +1,94 @@
 #define OEMRESOURCE // Needed for OCR_NORMAL
-
 #include <windows.h>
 
 #include <gl/gl.h>
 #include <gl/glu.h>
+
+#include <stdint.h>
+#include <stdio.h>
+
+#define STB_RECT_PACK_IMPLEMENTATION
+#define STB_SPRINTF_IMPLEMENTATION
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_rect_pack.h"
+#include "stb_sprintf.h"
+#include "stb_truetype.h"
+
+#define array_count(arr) (sizeof(arr) / sizeof((arr)[0]))
+
+struct Font
+{
+	float  baseline_advance;
+	GLuint texture;
+
+	stbtt_packedchar char_data['~' - ' '];
+};
+
+const int BITMAP_W = 512;
+const int BITMAP_H = 512;
+
+unsigned char tmp_bitmap[BITMAP_W * BITMAP_H];
+unsigned char ttf_buf[1 << 25];
+
+Font load_font(const char *filename)
+{
+	Font result = {};
+
+	FILE *file = fopen(filename, "rb");
+	if(file)
+	{
+		fread(ttf_buf, sizeof(char), array_count(ttf_buf), file);
+
+		stbtt_fontinfo font_info;
+		if(stbtt_InitFont(&font_info, ttf_buf, stbtt_GetFontOffsetForIndex(ttf_buf, 0)))
+		{
+			int   font_pixel_size = 16;
+			float font_scale      = stbtt_ScaleForPixelHeight(&font_info, font_pixel_size);
+
+			int ascent, descent, line_gap;
+			stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &line_gap);
+
+			result.baseline_advance = font_scale * (ascent - descent + line_gap);
+
+			stbtt_pack_context pack_ctx;
+			stbtt_PackBegin(&pack_ctx, tmp_bitmap, BITMAP_W, BITMAP_H, 0, 1, NULL);
+			stbtt_PackSetOversampling(&pack_ctx, 2, 2);
+			stbtt_PackFontRange(&pack_ctx, ttf_buf, 0, font_pixel_size, ' ', array_count(result.char_data), result.char_data);
+			stbtt_PackEnd(&pack_ctx);
+
+			glGenTextures(1, &result.texture);
+			glBindTexture(GL_TEXTURE_2D, result.texture);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, BITMAP_W, BITMAP_H, 0, GL_ALPHA, GL_UNSIGNED_BYTE, tmp_bitmap);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		}
+
+		fclose(file);
+	}
+
+	return result;
+}
+
+void draw_text(Font *font, float x, float y, float r, float g, float b, char *text)
+{
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, font->texture);
+
+	glColor3f(r, g, b);
+
+	glBegin(GL_QUADS);
+	while(*text)
+	{
+		stbtt_aligned_quad quad;
+		stbtt_GetPackedQuad(font->char_data, BITMAP_W, BITMAP_H, *text++ - ' ', &x, &y, &quad, false);
+
+		glTexCoord2f(quad.s0, quad.t0); glVertex2f(quad.x0, quad.y0);
+		glTexCoord2f(quad.s1, quad.t0); glVertex2f(quad.x1, quad.y0);
+		glTexCoord2f(quad.s1, quad.t1); glVertex2f(quad.x1, quad.y1);
+		glTexCoord2f(quad.s0, quad.t1); glVertex2f(quad.x0, quad.y1);
+	}
+	glEnd();
+}
 
 void win_get_client_dim(HWND window, int *w, int *h)
 {
@@ -95,13 +180,26 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		return 1;
 	}
 
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+
 	int client_w, client_h;
 	win_get_client_dim(window, &client_w, &client_h);
 
+	Font  font     = load_font("c:/windows/fonts/arial.ttf");
+	float baseline = font.baseline_advance;
+
+	uint64_t elapsed_microsecs = 0;
+
 	ShowWindow(window, SW_SHOW);
+
+	LARGE_INTEGER prev_count;
+	QueryPerformanceCounter(&prev_count);
 
 	for(;;)
 	{
+		baseline = font.baseline_advance;
+
 		MSG msg;
 		while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
@@ -115,6 +213,12 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		}
 
 		win_get_client_dim(window, &client_w, &client_h);
+
+		glClearColor(0, 0, 0, 1);
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		float aspect_ratio        = (float)client_w / (float)client_h;
 		float target_aspect_ratio = 1.0f; // Perfectly square
@@ -148,8 +252,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		glLoadIdentity();
 		glOrtho(0, map_w, map_h, 0, 0, 1);
 
-		glClearColor(0, 0, 0, 1);
-		glClear(GL_COLOR_BUFFER_BIT);
+		glDisable(GL_TEXTURE_2D);
 
 		glBegin(GL_QUADS);
 		{
@@ -183,7 +286,31 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		}
 		glEnd();
 
+		glViewport(0, 0, client_w, client_h);
+
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glOrtho(0, client_w, client_h, 0, 0, 1);
+
+		float dt = elapsed_microsecs / 1000000.0f;
+
+		char text[256];
+		stbsp_snprintf(text, sizeof(text), "%.4fs/f", dt);
+
+		draw_text(&font, 0, baseline, 1, 1, 1, text);
+		baseline += font.baseline_advance;
+
 		SwapBuffers(device_ctx);
+
+		LARGE_INTEGER curr_count;
+		QueryPerformanceCounter(&curr_count);
+
+		LARGE_INTEGER elapsed_count;
+		elapsed_count.QuadPart = curr_count.QuadPart - prev_count.QuadPart;
+
+		elapsed_microsecs = (elapsed_count.QuadPart * 1000000) / frequency.QuadPart;
+
+		prev_count = curr_count;
 	}
 
 exit:
