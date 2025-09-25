@@ -16,6 +16,8 @@
 #define array_count(arr) (sizeof(arr) / sizeof((arr)[0]))
 #define abs(x) ((x) > 0 ? (x) : -(x))
 
+#define swap(a, b) do { static_assert(sizeof(a) == sizeof(b)); unsigned char swap_tmp[sizeof(a)]; memcpy(swap_tmp, &a, sizeof(a)); memcpy(&a, &b, sizeof(a)); memcpy(&b, swap_tmp, sizeof(a)); } while(false)
+
 // TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
 //       Probably something to do with OpenGL but don't know whether it is my fault or the AMD driver's fault.
 
@@ -41,8 +43,168 @@ struct AStarNode
 	bool visited;
 	bool search;
 
-	AStarNode *next;
+	AStarNode *next_in_path;
+
+	// Binary min heap tree nodes
+	int        l_child_count;
+	AStarNode *l_child;
+
+	int        r_child_count;
+	AStarNode *r_child;
 };
+
+void a_star_node_swap(AStarNode *a, AStarNode *b)
+{
+	swap(a->x, b->x);
+	swap(a->y, b->y);
+	swap(a->g, b->g);
+	swap(a->h, b->h);
+
+	swap(a->visited, b->visited);
+	swap(a->search,  b->search );
+
+	swap(a->next_in_path, b->next_in_path);
+}
+
+AStarNode *a_star_node_remove_bottom(AStarNode *parent)
+{
+	AStarNode *result = NULL;
+	if(parent)
+	{
+		AStarNode *child = NULL;
+		if(parent->l_child_count > parent->r_child_count)
+		{
+			result = a_star_node_remove_bottom(parent->l_child);
+			parent->l_child_count--;
+
+			child = parent->l_child;
+
+			if(child == result)
+			{
+				parent->l_child = NULL;
+			}
+		}else if(parent->r_child_count > 0)
+		{
+			result = a_star_node_remove_bottom(parent->r_child);
+			parent->r_child_count--;
+
+			child = parent->r_child;
+
+			if(child == result)
+			{
+				parent->r_child = NULL;
+			}
+		}
+
+		if(!child)
+		{
+			result = parent;
+		}
+	}
+	return result;
+}
+
+int a_star_node_compare_f_score(AStarNode *a, AStarNode *b)
+{
+	int a_f = a->g + a->h;
+	int b_f = b->g + b->h;
+
+	int result = 0;
+	if(a_f == b_f)
+	{
+		result = a->h - b->h;
+	}else
+	{
+		result = a_f - b_f;
+	}
+
+	return result;
+}
+
+void a_star_node_remove_fix(AStarNode *parent)
+{
+	if(parent && parent->l_child)
+	{
+		bool is_l_score_less = a_star_node_compare_f_score(parent->l_child, parent) < 0;
+		if(parent->r_child)
+		{
+			bool is_r_score_less = a_star_node_compare_f_score(parent->r_child, parent) < 0;
+
+			if(is_l_score_less || is_r_score_less)
+			{
+				if(a_star_node_compare_f_score(parent->l_child, parent->r_child) < 0)
+				{
+					a_star_node_swap(parent, parent->l_child);
+					a_star_node_remove_fix(parent->l_child);
+				}else
+				{
+					a_star_node_swap(parent, parent->r_child);
+					a_star_node_remove_fix(parent->r_child);
+				}
+			}
+		}else if(is_l_score_less)
+		{
+			a_star_node_swap(parent, parent->l_child);
+			a_star_node_remove_fix(parent->l_child);
+		}
+	}
+}
+
+AStarNode *a_star_node_remove(AStarNode *parent)
+{
+	AStarNode *result = NULL;
+	if(parent)
+	{
+		AStarNode *bottom = a_star_node_remove_bottom(parent);
+		if(bottom != parent)
+		{
+			a_star_node_swap(bottom, parent);
+			a_star_node_remove_fix(parent);
+
+			result = parent;
+		}
+	}
+	return result;
+}
+
+AStarNode *a_star_node_insert(AStarNode *parent, AStarNode *to_insert)
+{
+	AStarNode *result = NULL;
+	if(parent)
+	{
+		AStarNode *child = NULL;
+		if(parent->l_child_count <= parent->r_child_count)
+		{
+			parent->l_child = a_star_node_insert(parent->l_child, to_insert);
+			parent->l_child_count++;
+
+			child = parent->l_child;
+		}else
+		{
+			parent->r_child = a_star_node_insert(parent->r_child, to_insert);
+			parent->r_child_count++;
+
+			child = parent->r_child;
+		}
+
+		if(child)
+		{
+			if(a_star_node_compare_f_score(child, parent) < 0)
+			{
+				a_star_node_swap(child, parent);
+			}
+
+			result = parent;
+		}else
+		{
+			result = to_insert;
+		}
+	}else
+	{
+		result = to_insert;
+	}
+	return result;
+}
 
 struct StationType
 {
@@ -333,7 +495,7 @@ regenerate_facility:
 
 	if(station_count != desired_station_count)
 	{
-		//return 1;
+		return 1;
 	}
 
 	uint64_t elapsed_microsecs = 0;
@@ -402,8 +564,9 @@ regenerate_facility:
 		glLoadIdentity();
 
 		glDisable(GL_TEXTURE_2D);
-
 		glBegin(GL_QUADS);
+
+		int a_star_iter_count = 0;
 		for(int station_a_idx = 0; station_a_idx < station_count; ++station_a_idx)
 		{
 			Station *station_a = &stations[station_a_idx];
@@ -422,35 +585,29 @@ regenerate_facility:
 					int target_x = station_b->x + type_b.door_offset_x;
 					int target_y = station_b->y + type_b.door_offset_y;
 
-					const int max_a_star_nodes = map_w * map_h;
+					static AStarNode a_star_node_map[map_h][map_w];
+					memset(a_star_node_map, 0, map_w * map_h * sizeof(AStarNode));
 
-					AStarNode a_star_nodes[map_h][map_w] = {};
-					a_star_nodes[start_y][start_x]       = {start_x, start_y};
+					a_star_node_map[start_y][start_x] = {start_x, start_y};
 
-					int        search_count             = 1;
-					AStarNode *search[max_a_star_nodes] = {&a_star_nodes[start_y][start_x]};
+					static AStarNode binary_heap_storage[map_w * map_h];
+					memset(binary_heap_storage, 0, map_w * map_h * sizeof(AStarNode));
 
-					while(search_count > 0 && search_count < max_a_star_nodes)
+					int        to_search_count = 0;
+					AStarNode *to_search       = &binary_heap_storage[to_search_count++];
+
+					to_search->x = start_x;
+					to_search->y = start_y;
+
+					while(to_search)
 					{
-						int curr_idx = 0;
-						for(int search_idx = 0; search_idx < search_count; ++search_idx)
-						{
-							AStarNode *n    = search[search_idx];
-							AStarNode *curr = search[curr_idx];
+						a_star_iter_count++;
 
-							int n_f    = n->g + n->h;
-							int curr_f = curr->g + curr->h;
-							if(n_f < curr_f || n_f == curr_f && n->h < curr->h)
-							{
-								curr_idx = search_idx;
-							}
-						}
-
-						AStarNode *curr = search[curr_idx];
+						AStarNode *curr = &a_star_node_map[to_search->y][to_search->x];
 
 						if(curr->x == target_x && curr->y == target_y)
 						{
-							for(; curr; curr = curr->next)
+							for(; curr; curr = curr->next_in_path)
 							{
 								draw_rect(curr->x, curr->y, 1, 1, 1, 1, 0);
 							}
@@ -460,7 +617,8 @@ regenerate_facility:
 						curr->visited = true;
 						curr->search  = false;
 
-						search[curr_idx] = search[--search_count]; // Unordered removal
+						to_search = a_star_node_remove(to_search);
+						to_search_count--;
 
 						int neighbor_offsets_x[] = {1, 0, -1,  0};
 						int neighbor_offsets_y[] = {0, 1,  0, -1};
@@ -472,16 +630,19 @@ regenerate_facility:
 
 							if(neighbor_x >= 0 && neighbor_x < map_w && neighbor_y >= 0 && neighbor_y < map_h && map[neighbor_y][neighbor_x] == 0)
 							{
-								AStarNode *neighbor = &a_star_nodes[neighbor_y][neighbor_x];
+								AStarNode *neighbor = &a_star_node_map[neighbor_y][neighbor_x];
 
 								if(!neighbor->visited)
 								{
+									int g = curr->g + 1;
+
 									if(!neighbor->search)
 									{
-										neighbor->x      = neighbor_x;
-										neighbor->y      = neighbor_y;
-										neighbor->g      = INT_MAX;
-										neighbor->search = true;
+										neighbor->x            = neighbor_x;
+										neighbor->y            = neighbor_y;
+										neighbor->g            = g;
+										neighbor->search       = true;
+										neighbor->next_in_path = curr;
 
 										int manhattan_x        = abs(target_x - neighbor_x);
 										int manhattan_y        = abs(target_y - neighbor_y);
@@ -489,17 +650,14 @@ regenerate_facility:
 
 										neighbor->h = manhattan_distance;
 
-										search[search_count++] = neighbor;
-									}
+										AStarNode *to_search_insert = &binary_heap_storage[to_search_count++];
+										*to_search_insert = *neighbor;
 
-									if(neighbor->search)
+										to_search = a_star_node_insert(to_search, to_search_insert);
+									}else if(g < neighbor->g)
 									{
-										int g = curr->g + 1;
-										if(g < neighbor->g)
-										{
-											neighbor->g    = g;
-											neighbor->next = curr;
-										}
+										neighbor->g            = g;
+										neighbor->next_in_path = curr;
 									}
 								}
 							}
@@ -551,6 +709,10 @@ regenerate_facility:
 		baseline += font.baseline_advance;
 
 		stbsp_snprintf(text, sizeof(text), "%.0ff/s", 1 / dt);
+		draw_text(&font, 0, baseline, 1, 1, 1, text);
+		baseline += font.baseline_advance;
+
+		stbsp_snprintf(text, sizeof(text), "A* iteration count: %d", a_star_iter_count);
 		draw_text(&font, 0, baseline, 1, 1, 1, text);
 		baseline += font.baseline_advance;
 
