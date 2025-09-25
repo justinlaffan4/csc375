@@ -15,6 +15,10 @@
 #include "stb_truetype.h"
 
 #define array_count(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define abs(x) ((x) > 0 ? (x) : -(x))
+
+// TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
+//       Probably something to do with OpenGL but don't know whether it is my fault or the AMD driver's fault.
 
 unsigned int random(unsigned int *rng_seed)
 {
@@ -26,6 +30,17 @@ unsigned int random(unsigned int *rng_seed)
 
 	return x;
 }
+
+struct AStarNode
+{
+	int x;
+	int y;
+
+	int g;
+	int h;
+
+	AStarNode *next;
+};
 
 struct StationLUT
 {
@@ -201,9 +216,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	pixel_format_desc.nSize        = sizeof(pixel_format_desc);
 	pixel_format_desc.nVersion     = 1;
-	pixel_format_desc.dwFlags      = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_TYPE_RGBA;
+	pixel_format_desc.dwFlags      = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
 	pixel_format_desc.iPixelType   = PFD_TYPE_RGBA; 
 	pixel_format_desc.cColorBits   = 32;
+	pixel_format_desc.cAlphaBits   = 8;
 	pixel_format_desc.cDepthBits   = 24;
 	pixel_format_desc.cStencilBits = 8;
 	pixel_format_desc.iLayerType   = PFD_MAIN_PLANE;
@@ -359,22 +375,139 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 
+		glDisable(GL_TEXTURE_2D);
+
+		glBegin(GL_QUADS);
 		for(int station_a_idx = 0; station_a_idx < station_count; ++station_a_idx)
 		{
 			Station *station_a = &stations[station_a_idx];
+
+			int start_x = station_a->x + station_a->door_offset_x;
+			int start_y = station_a->y + station_a->door_offset_y;
 
 			for(int station_b_idx = station_a_idx; station_b_idx < station_count; ++station_b_idx)
 			{
 				if(station_a_idx != station_b_idx)
 				{
 					Station *station_b = &stations[station_b_idx];
+
+					int target_x = station_b->x + station_b->door_offset_x;
+					int target_y = station_b->y + station_b->door_offset_y;
+
+					const int max_a_star_nodes = map_w * map_h;
+
+					int       a_star_node_count              = 1;
+					AStarNode a_star_nodes[max_a_star_nodes] = {{start_x, start_y}};
+
+					int        search_count             = 1;
+					AStarNode *search[max_a_star_nodes] = {&a_star_nodes[0]};
+
+					// TODO: Do we need to keep track of what nodes we visited?
+					int        visited_count             = 0;
+					AStarNode *visited[max_a_star_nodes] = {};
+
+					while(search_count > 0 && search_count < max_a_star_nodes)
+					{
+						int curr_idx = 0;
+						for(int search_idx = 0; search_idx < search_count; ++search_idx)
+						{
+							AStarNode *n    = search[search_idx];
+							AStarNode *curr = search[curr_idx];
+
+							int n_f    = n->g + n->h;
+							int curr_f = curr->g + curr->h;
+							if(n_f < curr_f || n_f == curr_f && n->h < curr->h)
+							{
+								curr_idx = search_idx;
+							}
+						}
+
+						AStarNode *curr = search[curr_idx];
+
+						if(curr->x == target_x && curr->y == target_y)
+						{
+							for(; curr; curr = curr->next)
+							{
+								draw_rect(curr->x, curr->y, 1, 1, 1, 1, 1);
+							}
+							break;
+						}
+
+						if(visited_count < max_a_star_nodes)
+						{
+							visited[visited_count++] = curr;
+						}
+
+						search[curr_idx] = search[--search_count]; // Unordered removal
+
+						int neighbor_offsets_x[] = {1, 0, -1,  0};
+						int neighbor_offsets_y[] = {0, 1,  0, -1};
+
+						for(int neighbor_idx = 0; neighbor_idx < 4; ++neighbor_idx)
+						{
+							int neighbor_x = curr->x + neighbor_offsets_x[neighbor_idx];
+							int neighbor_y = curr->y + neighbor_offsets_y[neighbor_idx];
+
+							if(neighbor_x >= 0 && neighbor_x < map_w && neighbor_y >= 0 && neighbor_y < map_h && map[neighbor_y][neighbor_x] == 0)
+							{
+								bool already_visited = false;
+								for(int visited_idx = 0; visited_idx < visited_count; ++visited_idx)
+								{
+									AStarNode *n = visited[visited_idx];
+									if(n->x == neighbor_x && n->y == neighbor_y)
+									{
+										already_visited = true;
+										break;
+									}
+								}
+
+								if(!already_visited)
+								{
+									AStarNode *neighbor = NULL;
+
+									// See if we can find neighbor inside the search list
+									for(int search_idx = 0; search_idx < search_count; ++search_idx)
+									{
+										AStarNode *n = search[search_idx];
+										if(n->x == neighbor_x && n->y == neighbor_y)
+										{
+											neighbor = n;
+										}
+									}
+
+									if(!neighbor && a_star_node_count < max_a_star_nodes)
+									{
+										neighbor = &a_star_nodes[a_star_node_count++];
+
+										neighbor->x = neighbor_x;
+										neighbor->y = neighbor_y;
+										neighbor->g = INT_MAX;
+
+										int manhattan_x        = abs(target_x - neighbor_x);
+										int manhattan_y        = abs(target_y - neighbor_y);
+										int manhattan_distance = manhattan_x + manhattan_y;
+
+										neighbor->h = manhattan_distance;
+										search[search_count++] = neighbor;
+									}
+
+									if(neighbor)
+									{
+										int g = curr->g + 1;
+										if(g < neighbor->g)
+										{
+											neighbor->g    = g;
+											neighbor->next = curr;
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
 
-		glDisable(GL_TEXTURE_2D);
-
-		glBegin(GL_QUADS);
 		for(int station_idx = 0; station_idx < station_count; ++station_idx)
 		{
 			Station *station = &stations[station_idx];
@@ -394,11 +527,8 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 			int door_y = y + station->door_offset_y;
 			int door_w = 1;
 			int door_h = 1;
-			int door_r = 1;
-			int door_g = 1;
-			int door_b = 1;
 
-			draw_rect(door_x, door_y, door_w, door_h, door_r, door_g, door_b);
+			draw_rect(door_x, door_y, door_w, door_h, 1, 0, 1);
 		}
 		glEnd();
 
