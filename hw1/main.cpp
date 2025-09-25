@@ -44,34 +44,25 @@ struct AStarNode
 	bool search;
 
 	AStarNode *next_in_path;
-
-	// Binary min heap tree nodes
-	int        l_child_count;
-	AStarNode *l_child;
-
-	int        r_child_count;
-	AStarNode *r_child;
 };
 
-void a_star_node_swap(AStarNode *a, AStarNode *b)
+struct AStarBinaryHeapNode
 {
-	swap(a->x, b->x);
-	swap(a->y, b->y);
-	swap(a->g, b->g);
-	swap(a->h, b->h);
+	AStarNode *n;
 
-	swap(a->visited, b->visited);
-	swap(a->search,  b->search );
+	int                  l_child_count;
+	AStarBinaryHeapNode *l_child;
 
-	swap(a->next_in_path, b->next_in_path);
-}
+	int                  r_child_count;
+	AStarBinaryHeapNode *r_child;
+};
 
-AStarNode *a_star_node_remove_bottom(AStarNode *parent)
+AStarBinaryHeapNode *a_star_node_remove_bottom(AStarBinaryHeapNode *parent)
 {
-	AStarNode *result = NULL;
+	AStarBinaryHeapNode *result = NULL;
 	if(parent)
 	{
-		AStarNode *child = NULL;
+		AStarBinaryHeapNode *child = NULL;
 		if(parent->l_child_count > parent->r_child_count)
 		{
 			result = a_star_node_remove_bottom(parent->l_child);
@@ -104,15 +95,15 @@ AStarNode *a_star_node_remove_bottom(AStarNode *parent)
 	return result;
 }
 
-int a_star_node_compare_f_score(AStarNode *a, AStarNode *b)
+int a_star_node_compare_f_score(AStarBinaryHeapNode *a, AStarBinaryHeapNode *b)
 {
-	int a_f = a->g + a->h;
-	int b_f = b->g + b->h;
+	int a_f = a->n->g + a->n->h;
+	int b_f = b->n->g + b->n->h;
 
 	int result = 0;
 	if(a_f == b_f)
 	{
-		result = a->h - b->h;
+		result = a->n->h - b->n->h;
 	}else
 	{
 		result = a_f - b_f;
@@ -121,7 +112,7 @@ int a_star_node_compare_f_score(AStarNode *a, AStarNode *b)
 	return result;
 }
 
-void a_star_node_remove_fix(AStarNode *parent)
+void a_star_node_remove_fix(AStarBinaryHeapNode *parent)
 {
 	if(parent && parent->l_child)
 	{
@@ -134,31 +125,33 @@ void a_star_node_remove_fix(AStarNode *parent)
 			{
 				if(a_star_node_compare_f_score(parent->l_child, parent->r_child) < 0)
 				{
-					a_star_node_swap(parent, parent->l_child);
+					swap(parent->n, parent->l_child->n);
 					a_star_node_remove_fix(parent->l_child);
 				}else
 				{
-					a_star_node_swap(parent, parent->r_child);
+					swap(parent->n, parent->r_child->n);
 					a_star_node_remove_fix(parent->r_child);
 				}
 			}
 		}else if(is_l_score_less)
 		{
-			a_star_node_swap(parent, parent->l_child);
+			swap(parent->n, parent->l_child->n);
 			a_star_node_remove_fix(parent->l_child);
 		}
 	}
 }
 
-AStarNode *a_star_node_remove(AStarNode *parent)
+AStarBinaryHeapNode *a_star_node_remove(AStarBinaryHeapNode *parent)
 {
-	AStarNode *result = NULL;
+	AStarBinaryHeapNode *result = NULL;
 	if(parent)
 	{
-		AStarNode *bottom = a_star_node_remove_bottom(parent);
+		AStarBinaryHeapNode *bottom = a_star_node_remove_bottom(parent);
 		if(bottom != parent)
 		{
-			a_star_node_swap(bottom, parent);
+			swap(bottom->n, parent->n);
+			free(bottom);
+
 			a_star_node_remove_fix(parent);
 
 			result = parent;
@@ -167,12 +160,12 @@ AStarNode *a_star_node_remove(AStarNode *parent)
 	return result;
 }
 
-AStarNode *a_star_node_insert(AStarNode *parent, AStarNode *to_insert)
+AStarBinaryHeapNode *a_star_node_insert(AStarBinaryHeapNode *parent, AStarNode *to_insert)
 {
-	AStarNode *result = NULL;
+	AStarBinaryHeapNode *result = NULL;
 	if(parent)
 	{
-		AStarNode *child = NULL;
+		AStarBinaryHeapNode *child = NULL;
 		if(parent->l_child_count <= parent->r_child_count)
 		{
 			parent->l_child = a_star_node_insert(parent->l_child, to_insert);
@@ -191,17 +184,19 @@ AStarNode *a_star_node_insert(AStarNode *parent, AStarNode *to_insert)
 		{
 			if(a_star_node_compare_f_score(child, parent) < 0)
 			{
-				a_star_node_swap(child, parent);
+				swap(child->n, parent->n);
 			}
 
 			result = parent;
 		}else
 		{
-			result = to_insert;
+			result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+			result->n = to_insert;
 		}
 	}else
 	{
-		result = to_insert;
+		result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+		result->n = to_insert;
 	}
 	return result;
 }
@@ -590,20 +585,14 @@ regenerate_facility:
 
 					a_star_node_map[start_y][start_x] = {start_x, start_y};
 
-					static AStarNode binary_heap_storage[map_w * map_h];
-					memset(binary_heap_storage, 0, map_w * map_h * sizeof(AStarNode));
-
-					int        to_search_count = 0;
-					AStarNode *to_search       = &binary_heap_storage[to_search_count++];
-
-					to_search->x = start_x;
-					to_search->y = start_y;
+					AStarBinaryHeapNode *to_search = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+					to_search->n = &a_star_node_map[start_y][start_x];
 
 					while(to_search)
 					{
 						a_star_iter_count++;
 
-						AStarNode *curr = &a_star_node_map[to_search->y][to_search->x];
+						AStarNode *curr = to_search->n;
 
 						if(curr->x == target_x && curr->y == target_y)
 						{
@@ -618,7 +607,6 @@ regenerate_facility:
 						curr->search  = false;
 
 						to_search = a_star_node_remove(to_search);
-						to_search_count--;
 
 						int neighbor_offsets_x[] = {1, 0, -1,  0};
 						int neighbor_offsets_y[] = {0, 1,  0, -1};
@@ -650,10 +638,7 @@ regenerate_facility:
 
 										neighbor->h = manhattan_distance;
 
-										AStarNode *to_search_insert = &binary_heap_storage[to_search_count++];
-										*to_search_insert = *neighbor;
-
-										to_search = a_star_node_insert(to_search, to_search_insert);
+										to_search = a_star_node_insert(to_search, neighbor);
 									}else if(g < neighbor->g)
 									{
 										neighbor->g            = g;
