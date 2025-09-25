@@ -1,4 +1,3 @@
-#define OEMRESOURCE // Needed for OCR_NORMAL
 #include <windows.h>
 
 #include <gl/gl.h>
@@ -36,13 +35,13 @@ struct AStarNode
 	int x;
 	int y;
 
-	int g;
-	int h;
+	int g; // Distance from start to node
+	int h; // Best distance (ignoring occlusions) from node to target
 
 	AStarNode *next;
 };
 
-struct StationLUT
+struct StationType
 {
 	float r;
 	float g;
@@ -57,17 +56,10 @@ struct StationLUT
 
 struct Station
 {
-	float r;
-	float g;
-	float b;
+	int type_idx;
 
 	int x;
 	int y;
-	int w;
-	int h;
-
-	int door_offset_x;
-	int door_offset_y;
 };
 
 struct Font
@@ -177,7 +169,7 @@ LRESULT win_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param)
 		case WM_PAINT:
 			{
 				PAINTSTRUCT ps;
-				BeginPaint(window, &ps);
+				HDC device_ctx = BeginPaint(window, &ps);
 				EndPaint(window, &ps);
 			}break;
 
@@ -195,9 +187,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	wc.style         = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
 	wc.lpfnWndProc   = win_proc;
 	wc.hInstance     = instance;
-	wc.lpszClassName = "FacilityGenWindowClass";
-	wc.hCursor       = (HCURSOR)LoadImage(NULL, MAKEINTRESOURCE(OCR_NORMAL), IMAGE_CURSOR, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
-	wc.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
+	wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
+	wc.lpszMenuName  = "FacilityGenMenu";
+	wc.lpszClassName = "FacitityGenClass";
 	if(!RegisterClassEx(&wc))
 	{
 		return 1;
@@ -212,25 +205,28 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	HDC device_ctx = GetDC(window);
 
-	PIXELFORMATDESCRIPTOR pixel_format_desc = {};
+	PIXELFORMATDESCRIPTOR desired_pixel_format_desc = {};
 
-	pixel_format_desc.nSize        = sizeof(pixel_format_desc);
-	pixel_format_desc.nVersion     = 1;
-	pixel_format_desc.dwFlags      = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-	pixel_format_desc.iPixelType   = PFD_TYPE_RGBA; 
-	pixel_format_desc.cColorBits   = 32;
-	pixel_format_desc.cAlphaBits   = 8;
-	pixel_format_desc.cDepthBits   = 24;
-	pixel_format_desc.cStencilBits = 8;
-	pixel_format_desc.iLayerType   = PFD_MAIN_PLANE;
+	desired_pixel_format_desc.nSize        = sizeof(desired_pixel_format_desc);
+	desired_pixel_format_desc.nVersion     = 1;
+	desired_pixel_format_desc.dwFlags      = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+	desired_pixel_format_desc.iPixelType   = PFD_TYPE_RGBA; 
+	desired_pixel_format_desc.cColorBits   = 32;
+	desired_pixel_format_desc.cAlphaBits   = 8;
+	desired_pixel_format_desc.cDepthBits   = 24;
+	desired_pixel_format_desc.cStencilBits = 8;
+	desired_pixel_format_desc.iLayerType   = PFD_MAIN_PLANE;
 
-	int pixel_format = ChoosePixelFormat(device_ctx, &pixel_format_desc);
-	if(!pixel_format)
+	int suggested_pixel_format = ChoosePixelFormat(device_ctx, &desired_pixel_format_desc);
+	if(!suggested_pixel_format)
 	{
 		return 1;
 	}
 
-	if(!SetPixelFormat(device_ctx, pixel_format, &pixel_format_desc))
+	PIXELFORMATDESCRIPTOR suggested_pixel_format_desc = {};
+	DescribePixelFormat(device_ctx, suggested_pixel_format, sizeof(suggested_pixel_format_desc), &suggested_pixel_format_desc);
+
+	if(!SetPixelFormat(device_ctx, suggested_pixel_format, &suggested_pixel_format_desc))
 	{
 		return 1;
 	}
@@ -260,54 +256,81 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	QueryPerformanceCounter(&large_rng_seed);
 	unsigned int rng_seed = large_rng_seed.LowPart;
 
-	const int map_w = 32;
-	const int map_h = 32;
+	const int map_w = 64;
+	const int map_h = 64;
 	int       map[map_h][map_w] = {};
 
-	const int station_count = 4;
+	const int desired_station_count = 24;
+	Station stations[desired_station_count] = {};
 
-	Station    stations[station_count]    = {};
-	StationLUT station_lut[station_count] = {
+	const int station_type_count = 4;
+	StationType station_types[station_type_count] = {
 		{0, 0, 1, 8, 8,  4, -1},
 		{0, 1, 0, 4, 4,  4,  2},
 		{0, 1, 1, 2, 2,  1,  2},
 		{1, 0, 0, 1, 1, -1,  0},
 	};
 
-	for(int station_idx = 0; station_idx < station_count; ++station_idx)
+	int station_count = 0;
+	for(int station_idx = 0; station_idx < desired_station_count; ++station_idx)
 	{
-		Station    *station = &stations[station_idx];
-		StationLUT  lut     = station_lut[station_idx];
+		int         type_idx = station_idx % station_type_count;
+		StationType type     = station_types[type_idx];
 
-		float r = lut.r;
-		float g = lut.g;
-		float b = lut.b;
+		int w = type.w;
+		int h = type.h;
 
-		int w = lut.w;
-		int h = lut.h;
+		int bound_x = map_w - w - 2;
+		int bound_y = map_h - h - 2;
 
-		// Account for door placement
-		int x = (random(&rng_seed) % (map_w - w - 2)) + 1;
-		int y = (random(&rng_seed) % (map_h - h - 2)) + 1;
-
-		for(int map_x = x; map_x < x + w; ++map_x)
+		if(bound_x > 0 && bound_y > 0)
 		{
-			for(int map_y = y; map_y < y + h; ++map_y)
+			int x = 0;
+			int y = 0;
+
+			int max_tries = 128;
+			int try_count = 0;
+regenerate_facility:
+			if(try_count++ < max_tries)
 			{
-				map[map_y][map_x] = 1;
+				// Account for door placement
+				x = (random(&rng_seed) % bound_x) + 1;
+				y = (random(&rng_seed) % bound_y) + 1;
+
+				// Check for overlap (accounting for door) and regenerate the position if overlap exists
+				for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+				{
+					for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
+					{
+						if(map[map_y][map_x] == 1)
+						{
+							goto regenerate_facility;
+						}
+					}
+				}
+			}
+
+			if(try_count < max_tries)
+			{
+				for(int map_x = x; map_x < x + w; ++map_x)
+				{
+					for(int map_y = y; map_y < y + h; ++map_y)
+					{
+						map[map_y][map_x] = 1;
+					}
+				}
+
+				Station *station  = &stations[station_count++];
+				station->type_idx = type_idx;
+				station->x        = x;
+				station->y        = y;
 			}
 		}
+	}
 
-		station->r = r;
-		station->g = g;
-		station->b = b;
-		station->x = x;
-		station->y = y;
-		station->w = w;
-		station->h = h;
-
-		station->door_offset_x = lut.door_offset_x;
-		station->door_offset_y = lut.door_offset_y;
+	if(station_count != desired_station_count)
+	{
+		//return 1;
 	}
 
 	uint64_t elapsed_microsecs = 0;
@@ -371,7 +394,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
-		glOrtho(0, map_w, map_h, 0, 0, 1);
+		glOrtho(0, map_w, map_h, 0, -1, 1);
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 
@@ -381,18 +404,20 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		for(int station_a_idx = 0; station_a_idx < station_count; ++station_a_idx)
 		{
 			Station *station_a = &stations[station_a_idx];
+			StationType type_a = station_types[station_a->type_idx];
 
-			int start_x = station_a->x + station_a->door_offset_x;
-			int start_y = station_a->y + station_a->door_offset_y;
+			int start_x = station_a->x + type_a.door_offset_x;
+			int start_y = station_a->y + type_a.door_offset_y;
 
 			for(int station_b_idx = station_a_idx; station_b_idx < station_count; ++station_b_idx)
 			{
 				if(station_a_idx != station_b_idx)
 				{
 					Station *station_b = &stations[station_b_idx];
+					StationType type_b = station_types[station_b->type_idx];
 
-					int target_x = station_b->x + station_b->door_offset_x;
-					int target_y = station_b->y + station_b->door_offset_y;
+					int target_x = station_b->x + type_b.door_offset_x;
+					int target_y = station_b->y + type_b.door_offset_y;
 
 					const int max_a_star_nodes = map_w * map_h;
 
@@ -428,7 +453,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 						{
 							for(; curr; curr = curr->next)
 							{
-								draw_rect(curr->x, curr->y, 1, 1, 1, 1, 1);
+								draw_rect(curr->x, curr->y, 1, 1, 1, 1, 0);
 							}
 							break;
 						}
@@ -511,20 +536,21 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 		for(int station_idx = 0; station_idx < station_count; ++station_idx)
 		{
 			Station *station = &stations[station_idx];
+			StationType type = station_types[station->type_idx];
 
-			float r = station->r;
-			float g = station->g;
-			float b = station->b;
+			float r = type.r;
+			float g = type.g;
+			float b = type.b;
 
 			int x = station->x;
 			int y = station->y;
-			int w = station->w;
-			int h = station->h;
+			int w = type.w;
+			int h = type.h;
 
 			draw_rect(x, y, w, h, r, g, b);
 
-			int door_x = x + station->door_offset_x;
-			int door_y = y + station->door_offset_y;
+			int door_x = x + type.door_offset_x;
+			int door_y = y + type.door_offset_y;
 			int door_w = 1;
 			int door_h = 1;
 
@@ -536,7 +562,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
-		glOrtho(0, client_w, client_h, 0, 0, 1);
+		glOrtho(0, client_w, client_h, 0, -1, 1);
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 
@@ -562,5 +588,8 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	}
 
 exit:
+	wglDeleteContext(gl_ctx);
+	DeleteDC(device_ctx);
+	DestroyWindow(window);
 	return 0;
 }
