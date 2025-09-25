@@ -2,7 +2,7 @@
 
 if not exist build mkdir build
 
-set cc_opts=/DINTERNAL_BUILD /Od /Zi /Fehw1.exe
+set cc_opts=/DINTERNAL_BUILD /O2 /Zi /Fehw1.exe
 set cl_opts=/INCREMENTAL:NO /OPT:REF
 
 pushd build

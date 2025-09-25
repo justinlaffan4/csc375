@@ -38,6 +38,9 @@ struct AStarNode
 	int g; // Distance from start to node
 	int h; // Best distance (ignoring occlusions) from node to target
 
+	bool visited;
+	bool search;
+
 	AStarNode *next;
 };
 
@@ -254,10 +257,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	LARGE_INTEGER large_rng_seed;
 	QueryPerformanceCounter(&large_rng_seed);
-	unsigned int rng_seed = large_rng_seed.LowPart;
+	unsigned int rng_seed = 69;//large_rng_seed.LowPart;
 
-	const int map_w = 64;
-	const int map_h = 64;
+	const int map_w = 128;
+	const int map_h = 128;
 	int       map[map_h][map_w] = {};
 
 	const int desired_station_count = 24;
@@ -421,15 +424,11 @@ regenerate_facility:
 
 					const int max_a_star_nodes = map_w * map_h;
 
-					int       a_star_node_count              = 1;
-					AStarNode a_star_nodes[max_a_star_nodes] = {{start_x, start_y}};
+					AStarNode a_star_nodes[map_h][map_w] = {};
+					a_star_nodes[start_y][start_x]       = {start_x, start_y};
 
 					int        search_count             = 1;
-					AStarNode *search[max_a_star_nodes] = {&a_star_nodes[0]};
-
-					// TODO: Do we need to keep track of what nodes we visited?
-					int        visited_count             = 0;
-					AStarNode *visited[max_a_star_nodes] = {};
+					AStarNode *search[max_a_star_nodes] = {&a_star_nodes[start_y][start_x]};
 
 					while(search_count > 0 && search_count < max_a_star_nodes)
 					{
@@ -458,10 +457,8 @@ regenerate_facility:
 							break;
 						}
 
-						if(visited_count < max_a_star_nodes)
-						{
-							visited[visited_count++] = curr;
-						}
+						curr->visited = true;
+						curr->search  = false;
 
 						search[curr_idx] = search[--search_count]; // Unordered removal
 
@@ -475,48 +472,27 @@ regenerate_facility:
 
 							if(neighbor_x >= 0 && neighbor_x < map_w && neighbor_y >= 0 && neighbor_y < map_h && map[neighbor_y][neighbor_x] == 0)
 							{
-								bool already_visited = false;
-								for(int visited_idx = 0; visited_idx < visited_count; ++visited_idx)
+								AStarNode *neighbor = &a_star_nodes[neighbor_y][neighbor_x];
+
+								if(!neighbor->visited)
 								{
-									AStarNode *n = visited[visited_idx];
-									if(n->x == neighbor_x && n->y == neighbor_y)
+									if(!neighbor->search)
 									{
-										already_visited = true;
-										break;
-									}
-								}
-
-								if(!already_visited)
-								{
-									AStarNode *neighbor = NULL;
-
-									// See if we can find neighbor inside the search list
-									for(int search_idx = 0; search_idx < search_count; ++search_idx)
-									{
-										AStarNode *n = search[search_idx];
-										if(n->x == neighbor_x && n->y == neighbor_y)
-										{
-											neighbor = n;
-										}
-									}
-
-									if(!neighbor && a_star_node_count < max_a_star_nodes)
-									{
-										neighbor = &a_star_nodes[a_star_node_count++];
-
-										neighbor->x = neighbor_x;
-										neighbor->y = neighbor_y;
-										neighbor->g = INT_MAX;
+										neighbor->x      = neighbor_x;
+										neighbor->y      = neighbor_y;
+										neighbor->g      = INT_MAX;
+										neighbor->search = true;
 
 										int manhattan_x        = abs(target_x - neighbor_x);
 										int manhattan_y        = abs(target_y - neighbor_y);
 										int manhattan_distance = manhattan_x + manhattan_y;
 
 										neighbor->h = manhattan_distance;
+
 										search[search_count++] = neighbor;
 									}
 
-									if(neighbor)
+									if(neighbor->search)
 									{
 										int g = curr->g + 1;
 										if(g < neighbor->g)
@@ -569,8 +545,12 @@ regenerate_facility:
 		float dt = elapsed_microsecs / 1000000.0f;
 
 		char text[256];
-		stbsp_snprintf(text, sizeof(text), "%.4fs/f", dt);
 
+		stbsp_snprintf(text, sizeof(text), "%.4fs/f", dt);
+		draw_text(&font, 0, baseline, 1, 1, 1, text);
+		baseline += font.baseline_advance;
+
+		stbsp_snprintf(text, sizeof(text), "%.0ff/s", 1 / dt);
 		draw_text(&font, 0, baseline, 1, 1, 1, text);
 		baseline += font.baseline_advance;
 
