@@ -1,0 +1,610 @@
+#include "app.h"
+
+const int MAP_W = 128;
+const int MAP_H = 128;
+
+const int BITMAP_W = 512;
+const int BITMAP_H = 512;
+
+int map[MAP_H][MAP_W];
+
+unsigned char tmp_bitmap[BITMAP_W * BITMAP_H];
+unsigned char ttf_buf[1 << 25];
+
+unsigned int random(unsigned int *rng_seed)
+{
+	unsigned int x = *rng_seed;
+	x ^= x << 6;
+	x ^= x >> 21;
+	x ^= x << 7;
+	*rng_seed = x;
+
+	return x;
+}
+
+Font load_font(const char *filename)
+{
+	Font result = {};
+
+	FILE *file = fopen(filename, "rb");
+	if(file)
+	{
+		fread(ttf_buf, sizeof(char), array_count(ttf_buf), file);
+
+		stbtt_fontinfo font_info;
+		if(stbtt_InitFont(&font_info, ttf_buf, stbtt_GetFontOffsetForIndex(ttf_buf, 0)))
+		{
+			int   font_pixel_size = 16;
+			float font_scale      = stbtt_ScaleForPixelHeight(&font_info, font_pixel_size);
+
+			int ascent, descent, line_gap;
+			stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &line_gap);
+
+			result.baseline_advance = font_scale * (ascent - descent + line_gap);
+
+			stbtt_pack_context pack_ctx;
+			stbtt_PackBegin(&pack_ctx, tmp_bitmap, BITMAP_W, BITMAP_H, 0, 1, NULL);
+			stbtt_PackSetOversampling(&pack_ctx, 2, 2);
+			stbtt_PackFontRange(&pack_ctx, ttf_buf, 0, font_pixel_size, ' ', array_count(result.char_data), result.char_data);
+			stbtt_PackEnd(&pack_ctx);
+
+			glGenTextures(1, &result.texture);
+			glBindTexture(GL_TEXTURE_2D, result.texture);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, BITMAP_W, BITMAP_H, 0, GL_ALPHA, GL_UNSIGNED_BYTE, tmp_bitmap);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		}
+
+		fclose(file);
+	}
+
+	return result;
+}
+
+void draw_text(Font *font, float x, float y, float r, float g, float b, char *text)
+{
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, font->texture);
+
+	glBegin(GL_QUADS);
+
+	glColor3f(r, g, b);
+
+	while(*text)
+	{
+		stbtt_aligned_quad quad;
+		stbtt_GetPackedQuad(font->char_data, BITMAP_W, BITMAP_H, *text++ - ' ', &x, &y, &quad, false);
+
+		glTexCoord2f(quad.s0, quad.t0); glVertex2f(quad.x0, quad.y0);
+		glTexCoord2f(quad.s1, quad.t0); glVertex2f(quad.x1, quad.y0);
+		glTexCoord2f(quad.s1, quad.t1); glVertex2f(quad.x1, quad.y1);
+		glTexCoord2f(quad.s0, quad.t1); glVertex2f(quad.x0, quad.y1);
+	}
+	glEnd();
+}
+
+void draw_rect(float x, float y, float w, float h, float r, float g, float b)
+{
+	glColor3f(r, g, b);
+
+	glVertex2f(x,     y    );
+	glVertex2f(x + w, y    );
+	glVertex2f(x + w, y + h);
+	glVertex2f(x,     y + h);
+}
+
+AStarBinaryHeapNode *a_star_node_remove_bottom(AStarBinaryHeapNode *parent)
+{
+	AStarBinaryHeapNode *result = NULL;
+	if(parent)
+	{
+		AStarBinaryHeapNode *child = NULL;
+		if(parent->l_child_count > parent->r_child_count)
+		{
+			result = a_star_node_remove_bottom(parent->l_child);
+			parent->l_child_count--;
+
+			child = parent->l_child;
+
+			if(child == result)
+			{
+				parent->l_child = NULL;
+			}
+		}else if(parent->r_child_count > 0)
+		{
+			result = a_star_node_remove_bottom(parent->r_child);
+			parent->r_child_count--;
+
+			child = parent->r_child;
+
+			if(child == result)
+			{
+				parent->r_child = NULL;
+			}
+		}
+
+		if(!child)
+		{
+			result = parent;
+		}
+	}
+	return result;
+}
+
+int a_star_node_compare_f_score(AStarBinaryHeapNode *a, AStarBinaryHeapNode *b)
+{
+	int a_f = a->n->g + a->n->h;
+	int b_f = b->n->g + b->n->h;
+
+	int result = 0;
+	if(a_f == b_f)
+	{
+		result = a->n->h - b->n->h;
+	}else
+	{
+		result = a_f - b_f;
+	}
+
+	return result;
+}
+
+void a_star_node_remove_fix(AStarBinaryHeapNode *parent)
+{
+	if(parent && parent->l_child)
+	{
+		bool is_l_score_less = a_star_node_compare_f_score(parent->l_child, parent) < 0;
+		if(parent->r_child)
+		{
+			bool is_r_score_less = a_star_node_compare_f_score(parent->r_child, parent) < 0;
+
+			if(is_l_score_less || is_r_score_less)
+			{
+				if(a_star_node_compare_f_score(parent->l_child, parent->r_child) < 0)
+				{
+					swap(parent->n, parent->l_child->n);
+					a_star_node_remove_fix(parent->l_child);
+				}else
+				{
+					swap(parent->n, parent->r_child->n);
+					a_star_node_remove_fix(parent->r_child);
+				}
+			}
+		}else if(is_l_score_less)
+		{
+			swap(parent->n, parent->l_child->n);
+			a_star_node_remove_fix(parent->l_child);
+		}
+	}
+}
+
+AStarBinaryHeapNode *a_star_node_remove(AStarBinaryHeapNode *parent)
+{
+	AStarBinaryHeapNode *result = NULL;
+	if(parent)
+	{
+		AStarBinaryHeapNode *bottom = a_star_node_remove_bottom(parent);
+		if(bottom != parent)
+		{
+			swap(bottom->n, parent->n);
+			free(bottom);
+
+			a_star_node_remove_fix(parent);
+
+			result = parent;
+		}
+	}
+	return result;
+}
+
+AStarBinaryHeapNode *a_star_node_insert(AStarBinaryHeapNode *parent, AStarNode *to_insert)
+{
+	AStarBinaryHeapNode *result = NULL;
+	if(parent)
+	{
+		AStarBinaryHeapNode *child = NULL;
+		if(parent->l_child_count <= parent->r_child_count)
+		{
+			parent->l_child = a_star_node_insert(parent->l_child, to_insert);
+			parent->l_child_count++;
+
+			child = parent->l_child;
+		}else
+		{
+			parent->r_child = a_star_node_insert(parent->r_child, to_insert);
+			parent->r_child_count++;
+
+			child = parent->r_child;
+		}
+
+		if(child)
+		{
+			if(a_star_node_compare_f_score(child, parent) < 0)
+			{
+				swap(child->n, parent->n);
+			}
+
+			result = parent;
+		}else
+		{
+			result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+			result->n = to_insert;
+		}
+	}else
+	{
+		result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+		result->n = to_insert;
+	}
+	return result;
+}
+
+AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y)
+{
+	AStarNode *result = NULL;
+
+	static AStarNode a_star_node_map[MAP_H][MAP_W];
+	memset(a_star_node_map, 0, MAP_W * MAP_H * sizeof(AStarNode));
+
+	a_star_node_map[start_y][start_x] = {start_x, start_y};
+
+	AStarBinaryHeapNode *to_search = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
+	to_search->n = &a_star_node_map[start_y][start_x];
+
+	while(to_search)
+	{
+		AStarNode *curr = to_search->n;
+
+		if(curr->x == target_x && curr->y == target_y)
+		{
+			result = curr;
+			break;
+		}
+
+		curr->visited = true;
+		curr->search  = false;
+
+		to_search = a_star_node_remove(to_search);
+
+		int neighbor_offsets_x[] = {1, 0, -1,  0};
+		int neighbor_offsets_y[] = {0, 1,  0, -1};
+
+		for(int neighbor_idx = 0; neighbor_idx < 4; ++neighbor_idx)
+		{
+			int neighbor_x = curr->x + neighbor_offsets_x[neighbor_idx];
+			int neighbor_y = curr->y + neighbor_offsets_y[neighbor_idx];
+
+			if(neighbor_x >= 0 && neighbor_x < MAP_W && neighbor_y >= 0 && neighbor_y < MAP_H && map[neighbor_y][neighbor_x] == 0)
+			{
+				AStarNode *neighbor = &a_star_node_map[neighbor_y][neighbor_x];
+
+				if(!neighbor->visited)
+				{
+					int g = curr->g + 1;
+
+					if(!neighbor->search)
+					{
+						neighbor->x            = neighbor_x;
+						neighbor->y            = neighbor_y;
+						neighbor->g            = g;
+						neighbor->search       = true;
+						neighbor->next_in_path = curr;
+
+						int manhattan_x        = abs(target_x - neighbor_x);
+						int manhattan_y        = abs(target_y - neighbor_y);
+						int manhattan_distance = manhattan_x + manhattan_y;
+
+						neighbor->h = manhattan_distance;
+
+						to_search = a_star_node_insert(to_search, neighbor);
+					}else if(g < neighbor->g)
+					{
+						neighbor->g            = g;
+						neighbor->next_in_path = curr;
+					}
+				}
+			}
+		}
+	}
+	
+	return result;
+}
+
+AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y)
+{
+	AStarNode *result = NULL;
+
+	static AStarNode a_star_node_map[MAP_H][MAP_W];
+	memset(a_star_node_map, 0, MAP_W * MAP_H * sizeof(AStarNode));
+
+	a_star_node_map[start_y][start_x] = {start_x, start_y};
+
+	int        search_count             = 1;
+	AStarNode *to_search[MAP_W * MAP_H] = {&a_star_node_map[start_y][start_x]};
+
+	while(to_search)
+	{
+		int curr_idx = 0;
+		for(int to_search_idx = 0; to_search_idx < search_count; ++to_search_idx)
+		{
+			AStarNode *n    = to_search[to_search_idx];
+			AStarNode *curr = to_search[curr_idx];
+
+			int n_f    = n->g + n->h;
+			int curr_f = curr->g + curr->h;
+			if(n_f < curr_f || n_f == curr_f && n->h < curr->h)
+			{
+				curr_idx = to_search_idx;
+			}
+		}
+
+		AStarNode *curr = to_search[curr_idx];
+
+		if(curr->x == target_x && curr->y == target_y)
+		{
+			result = curr;
+			break;
+		}
+
+		curr->visited = true;
+		curr->search  = false;
+
+		to_search[curr_idx] = to_search[--search_count]; // Unordered removal
+
+		int neighbor_offsets_x[] = {1, 0, -1,  0};
+		int neighbor_offsets_y[] = {0, 1,  0, -1};
+
+		for(int neighbor_idx = 0; neighbor_idx < 4; ++neighbor_idx)
+		{
+			int neighbor_x = curr->x + neighbor_offsets_x[neighbor_idx];
+			int neighbor_y = curr->y + neighbor_offsets_y[neighbor_idx];
+
+			if(neighbor_x >= 0 && neighbor_x < MAP_W && neighbor_y >= 0 && neighbor_y < MAP_H && map[neighbor_y][neighbor_x] == 0)
+			{
+				AStarNode *neighbor = &a_star_node_map[neighbor_y][neighbor_x];
+
+				if(!neighbor->visited)
+				{
+					int g = curr->g + 1;
+
+					if(!neighbor->search)
+					{
+						neighbor->x            = neighbor_x;
+						neighbor->y            = neighbor_y;
+						neighbor->g            = g;
+						neighbor->search       = true;
+						neighbor->next_in_path = curr;
+
+						int manhattan_x        = abs(target_x - neighbor_x);
+						int manhattan_y        = abs(target_y - neighbor_y);
+						int manhattan_distance = manhattan_x + manhattan_y;
+
+						neighbor->h = manhattan_distance;
+
+						to_search[search_count++] = neighbor;
+					}else if(g < neighbor->g)
+					{
+						neighbor->g            = g;
+						neighbor->next_in_path = curr;
+					}
+				}
+			}
+		}
+	}
+	
+	return result;
+}
+
+AppState app_make(const char *font_filename, InputState *input)
+{
+	AppState result = {};
+	result.font     = load_font(font_filename);
+	result.baseline = result.font.baseline_advance;
+
+	result.station_types[0] = {0, 0, 1, 8, 8,  4, -1};
+	result.station_types[1] = {0, 1, 0, 4, 4,  4,  2};
+	result.station_types[2] = {0, 1, 1, 2, 2,  1,  2};
+	result.station_types[3] = {1, 0, 0, 1, 1, -1,  0};
+
+	for(int station_idx = 0; station_idx < DESIRED_STATION_COUNT; ++station_idx)
+	{
+		int         type_idx = station_idx % STATION_TYPE_COUNT;
+		StationType type     = result.station_types[type_idx];
+
+		int w = type.w;
+		int h = type.h;
+
+		int bound_x = MAP_W - w - 2;
+		int bound_y = MAP_H - h - 2;
+
+		if(bound_x > 0 && bound_y > 0)
+		{
+			int x = 0;
+			int y = 0;
+
+			int max_tries = 128;
+			int try_count = 0;
+regenerate_facility:
+			if(try_count++ < max_tries)
+			{
+				// Account for door placement
+				x = (random(&input->rng_seed) % bound_x) + 1;
+				y = (random(&input->rng_seed) % bound_y) + 1;
+
+				// Check for overlap (accounting for door) and regenerate the position if overlap exists
+				for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+				{
+					for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
+					{
+						if(map[map_y][map_x] == 1)
+						{
+							goto regenerate_facility;
+						}
+					}
+				}
+			}
+
+			if(try_count < max_tries)
+			{
+				for(int map_x = x; map_x < x + w; ++map_x)
+				{
+					for(int map_y = y; map_y < y + h; ++map_y)
+					{
+						map[map_y][map_x] = 1;
+					}
+				}
+
+				Station *station  = &result.stations[result.station_count++];
+				station->type_idx = type_idx;
+				station->x        = x;
+				station->y        = y;
+			}
+		}
+	}
+
+	if(result.station_count != DESIRED_STATION_COUNT)
+	{
+	}
+
+	return result;
+}
+
+void app_update(AppState *app, InputState *input)
+{
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_LIGHTING);
+	glDisable(GL_DEPTH_TEST);
+
+	glClearColor(0.1f, 0.1f, 0.1f, 1);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	int client_w = input->client_w;
+	int client_h = input->client_h;
+
+	float aspect_ratio        = (float)client_w / (float)client_h;
+	float target_aspect_ratio = 1.0f; // Perfectly square
+
+	float viewport_x = 0;
+	float viewport_y = 0;
+	float viewport_w = client_w;
+	float viewport_h = client_h;
+	if(aspect_ratio > target_aspect_ratio)
+	{
+		viewport_w = client_h * target_aspect_ratio;
+		viewport_h = client_h;
+
+		viewport_x = (client_w - viewport_w) * 0.5f;
+		viewport_y = 0;
+	}else
+	{
+		viewport_w = client_w;
+		viewport_h = client_w * (1 / target_aspect_ratio);
+
+		viewport_x = 0;
+		viewport_y = (client_h - viewport_h ) * 0.5f;
+	}
+
+	glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
+
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, MAP_W, MAP_H, 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+	glDisable(GL_TEXTURE_2D);
+	glBegin(GL_QUADS);
+
+	for(int station_a_idx = 0; station_a_idx < app->station_count; ++station_a_idx)
+	{
+		Station *station_a = &app->stations[station_a_idx];
+		StationType type_a = app->station_types[station_a->type_idx];
+
+		int start_x = station_a->x + type_a.door_offset_x;
+		int start_y = station_a->y + type_a.door_offset_y;
+
+		for(int station_b_idx = station_a_idx; station_b_idx < app->station_count; ++station_b_idx)
+		{
+			if(station_a_idx != station_b_idx)
+			{
+				Station *station_b = &app->stations[station_b_idx];
+				StationType type_b = app->station_types[station_b->type_idx];
+
+				int target_x = station_b->x + type_b.door_offset_x;
+				int target_y = station_b->y + type_b.door_offset_y;
+
+				AStarNode *old_path = a_star_path_find_old(start_x, start_y, target_x, target_y);
+				AStarNode *new_path = a_star_path_find_new(start_x, start_y, target_x, target_y);
+
+				int tile_count = 0;
+				while(old_path && new_path)
+				{
+					if(old_path->x != new_path->x || old_path->y != new_path->y)
+					{
+						int breakpoint = 0;
+					}
+
+					old_path = old_path->next_in_path;
+					new_path = new_path->next_in_path;
+
+					tile_count++;
+				}
+#if 0
+				for(; n; n = n->next_in_path)
+				{
+					draw_rect(n->x, n->y, 1, 1, 1, 1, 0);
+				}
+#endif
+			}
+		}
+	}
+
+	for(int station_idx = 0; station_idx < app->station_count; ++station_idx)
+	{
+		Station *station = &app->stations[station_idx];
+		StationType type = app->station_types[station->type_idx];
+
+		float r = type.r;
+		float g = type.g;
+		float b = type.b;
+
+		int x = station->x;
+		int y = station->y;
+		int w = type.w;
+		int h = type.h;
+
+		draw_rect(x, y, w, h, r, g, b);
+
+		int door_x = x + type.door_offset_x;
+		int door_y = y + type.door_offset_y;
+		int door_w = 1;
+		int door_h = 1;
+
+		draw_rect(door_x, door_y, door_w, door_h, 1, 0, 1);
+	}
+	glEnd();
+
+	glViewport(0, 0, client_w, client_h);
+
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, client_w, client_h, 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+	float dt = input->elapsed_microsecs / 1000000.0f;
+
+	char text[256];
+
+	app->baseline = app->font.baseline_advance;
+
+	stbsp_snprintf(text, sizeof(text), "%.4fs/f", dt);
+	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
+	app->baseline += app->font.baseline_advance;
+
+	stbsp_snprintf(text, sizeof(text), "%.0ff/s", 1 / dt);
+	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
+	app->baseline += app->font.baseline_advance;
+}
+
