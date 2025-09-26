@@ -1,7 +1,7 @@
 #include "app.h"
 
-const int MAP_W = 32;
-const int MAP_H = 32;
+const int MAP_W = 128;
+const int MAP_H = 128;
 
 const int BITMAP_W = 512;
 const int BITMAP_H = 512;
@@ -117,11 +117,8 @@ Arena *arena_get_scratch(Arena **conflicts, int count)
 			Arena *conflict = conflicts[conflict_idx];
 			if(conflict == arena)
 			{
-				is_conflict = false;
-				break;
-			}else
-			{
 				is_conflict = true;
+				break;
 			}
 		}
 
@@ -236,53 +233,15 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b)
 	glVertex2f(x,     y + h);
 }
 
-AStarBinaryHeapNode *a_star_node_remove_bottom(AStarBinaryHeapNode *parent)
+int a_star_node_cmp(AStarNode *a, AStarNode *b)
 {
-	AStarBinaryHeapNode *result = NULL;
-	if(parent)
-	{
-		AStarBinaryHeapNode *child = NULL;
-		if(parent->l_child_count > parent->r_child_count)
-		{
-			result = a_star_node_remove_bottom(parent->l_child);
-			parent->l_child_count--;
+	int a_f = a->g + a->h;
+	int b_f = b->g + b->h;
 
-			child = parent->l_child;
-
-			if(child == result)
-			{
-				parent->l_child = NULL;
-			}
-		}else if(parent->r_child_count > 0)
-		{
-			result = a_star_node_remove_bottom(parent->r_child);
-			parent->r_child_count--;
-
-			child = parent->r_child;
-
-			if(child == result)
-			{
-				parent->r_child = NULL;
-			}
-		}
-
-		if(!child)
-		{
-			result = parent;
-		}
-	}
-	return result;
-}
-
-int a_star_node_compare_f_score(AStarBinaryHeapNode *a, AStarBinaryHeapNode *b)
-{
-	int a_f = a->n->g + a->n->h;
-	int b_f = b->n->g + b->n->h;
-
-	int result = 0;
+	int result = 0;//(a_f < b_f) || (a_f == b_f && a->h < b->h);
 	if(a_f == b_f)
 	{
-		result = a->n->h - b->n->h;
+		result = a->h - b->h;
 	}else
 	{
 		result = a_f - b_f;
@@ -291,122 +250,142 @@ int a_star_node_compare_f_score(AStarBinaryHeapNode *a, AStarBinaryHeapNode *b)
 	return result;
 }
 
-void a_star_node_remove_fix(AStarBinaryHeapNode *parent)
+int get_parent_idx(int idx)
 {
-	if(parent && parent->l_child)
-	{
-		bool is_l_score_less = a_star_node_compare_f_score(parent->l_child, parent) < 0;
-		if(parent->r_child)
-		{
-			bool is_r_score_less = a_star_node_compare_f_score(parent->r_child, parent) < 0;
-
-			if(is_l_score_less || is_r_score_less)
-			{
-				if(a_star_node_compare_f_score(parent->l_child, parent->r_child) < 0)
-				{
-					swap(parent->n, parent->l_child->n);
-					a_star_node_remove_fix(parent->l_child);
-				}else
-				{
-					swap(parent->n, parent->r_child->n);
-					a_star_node_remove_fix(parent->r_child);
-				}
-			}
-		}else if(is_l_score_less)
-		{
-			swap(parent->n, parent->l_child->n);
-			a_star_node_remove_fix(parent->l_child);
-		}
-	}
-}
-
-AStarBinaryHeapNode *a_star_node_remove(AStarBinaryHeapNode *parent)
-{
-	AStarBinaryHeapNode *result = NULL;
-	if(parent)
-	{
-		AStarBinaryHeapNode *bottom = a_star_node_remove_bottom(parent);
-		if(bottom != parent)
-		{
-			swap(bottom->n, parent->n);
-			free(bottom);
-
-			a_star_node_remove_fix(parent);
-
-			result = parent;
-		}
-	}
+	int result = (idx - 1) / 2;
 	return result;
 }
 
-AStarBinaryHeapNode *a_star_node_insert(AStarBinaryHeapNode *parent, AStarNode *to_insert)
+int get_l_child_idx(int idx)
 {
-	AStarBinaryHeapNode *result = NULL;
-	if(parent)
-	{
-		AStarBinaryHeapNode *child = NULL;
-		if(parent->l_child_count <= parent->r_child_count)
-		{
-			parent->l_child = a_star_node_insert(parent->l_child, to_insert);
-			parent->l_child_count++;
-
-			child = parent->l_child;
-		}else
-		{
-			parent->r_child = a_star_node_insert(parent->r_child, to_insert);
-			parent->r_child_count++;
-
-			child = parent->r_child;
-		}
-
-		if(child)
-		{
-			if(a_star_node_compare_f_score(child, parent) < 0)
-			{
-				swap(child->n, parent->n);
-			}
-
-			result = parent;
-		}else
-		{
-			result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
-			result->n = to_insert;
-		}
-	}else
-	{
-		result = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
-		result->n = to_insert;
-	}
+	int result = (2 * idx + 1);
 	return result;
 }
 
-AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count)
+int get_r_child_idx(int idx)
 {
-	AStarNode *result = NULL;
+	int result = (2 * idx + 2);
+	return result;
+}
+
+AStarBinaryHeap a_star_heap_make(int capacity, Arena *arena)
+{
+	AStarBinaryHeap result = {};
+	result.node_capacity   = capacity;
+	result.nodes           = arena_push_array(arena, capacity, AStarNode *);
+
+	return result;
+}
+
+void a_star_heap_swap(AStarBinaryHeap *heap, int a, int b)
+{
+	swap(heap->nodes[a], heap->nodes[b]);
+
+	heap->nodes[a]->heap_idx = a;
+	heap->nodes[b]->heap_idx = b;
+}
+
+void a_star_heap_heapify_up(AStarBinaryHeap *heap, int idx)
+{
+	while(idx > 0 && a_star_node_cmp(heap->nodes[get_parent_idx(idx)], heap->nodes[idx]) > 0)
+	{
+		a_star_heap_swap(heap, get_parent_idx(idx), idx);
+		idx = get_parent_idx(idx);
+	}
+}
+
+void a_star_heap_insert(AStarBinaryHeap *heap, AStarNode *node)
+{
+	if(heap->node_count < heap->node_capacity)
+	{
+		node->heap_idx = heap->node_count++;
+
+		// Insert at bottom of tree
+		heap->nodes[node->heap_idx] = node;
+		a_star_heap_heapify_up(heap, node->heap_idx);
+	}
+}
+
+void a_star_heap_remove_min(AStarBinaryHeap *heap)
+{
+	int last_idx = heap->node_count - 1;
+	int curr_idx = 0;
+	a_star_heap_swap(heap, last_idx, curr_idx);
+	--heap->node_count;
+
+heapify_down:
+	int l_idx = get_l_child_idx(curr_idx);
+	int r_idx = get_r_child_idx(curr_idx);
+
+	int smallest_idx = curr_idx;
+
+	if(l_idx < heap->node_count && a_star_node_cmp(heap->nodes[l_idx], heap->nodes[smallest_idx]) < 0)
+	{
+		smallest_idx = l_idx;
+	}
+
+	if(r_idx < heap->node_count && a_star_node_cmp(heap->nodes[r_idx], heap->nodes[smallest_idx]) < 0)
+	{
+		smallest_idx = r_idx;
+	}
+
+	if(smallest_idx != curr_idx)
+	{
+		a_star_heap_swap(heap, smallest_idx, curr_idx);
+
+		curr_idx = smallest_idx;
+		goto heapify_down;
+	}
+}
+
+AStarPath a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena)
+{
+	AStarPath result = {};
+
+	Arena *conflicts[] = {arena};
+	TmpArena scratch   = arena_begin_scratch(conflicts, array_count(conflicts));
 
 	static AStarNode a_star_node_map[MAP_H][MAP_W];
 	memset(a_star_node_map, 0, MAP_W * MAP_H * sizeof(AStarNode));
 
-	a_star_node_map[start_y][start_x] = {start_x, start_y};
+	AStarNode *start_node = &a_star_node_map[start_y][start_x];
+	start_node->x         = start_x;
+	start_node->y         = start_y;
+	start_node->h         = abs(target_x - start_x) + abs(target_y - start_y);
+	start_node->search    = true;
 
-	AStarBinaryHeapNode *to_search = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
-	to_search->n = &a_star_node_map[start_y][start_x];
+	AStarBinaryHeap to_search = a_star_heap_make(MAP_W * MAP_H, scratch.arena);
+	a_star_heap_insert(&to_search, start_node);
 
 	int steps = 0;
-	while(to_search)
+	while(to_search.node_count > 0)
 	{
-		AStarNode *curr = to_search->n;
+		AStarNode *curr = to_search.nodes[0];
 
 		if(steps++ >= step_count || (curr->x == target_x && curr->y == target_y))
 		{
-			result = curr;
+			for(AStarNode *n = curr; n; n = n->next_in_path)
+			{
+				result.tile_count++;
+			}
+
+			result.tiles = arena_push_array(arena, result.tile_count, AStarPathTile);
+
+			int tile_idx = 0;
+			for(AStarNode *n = curr; n; n = n->next_in_path)
+			{
+				AStarPathTile *tile = &result.tiles[tile_idx++];
+				tile->x             = n->x;
+				tile->y             = n->y;
+			}
+
 			break;
 		}
 
 		curr->visited = true;
 		curr->search  = false;
 
-		to_search = a_star_node_remove(to_search);
+		a_star_heap_remove_min(&to_search);
 
 		int neighbor_offsets_x[] = {1, 0, -1,  0};
 		int neighbor_offsets_y[] = {0, 1,  0, -1};
@@ -438,31 +417,40 @@ AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int targ
 
 						neighbor->h = manhattan_distance;
 
-						to_search = a_star_node_insert(to_search, neighbor);
+						a_star_heap_insert(&to_search, neighbor);
 					}else if(g < neighbor->g)
 					{
 						neighbor->g            = g;
 						neighbor->next_in_path = curr;
+
+						a_star_heap_heapify_up(&to_search, neighbor->heap_idx);
 					}
 				}
 			}
 		}
 	}
+
+	arena_end_scratch(scratch);
 	
 	return result;
 }
 
-AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count)
+AStarPath a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena)
 {
-	AStarNode *result = NULL;
+	AStarPath result = {};
+
+	Arena *conflicts[] = {arena};
+	TmpArena scratch   = arena_begin_scratch(conflicts, array_count(conflicts));
 
 	static AStarNode a_star_node_map[MAP_H][MAP_W];
 	memset(a_star_node_map, 0, MAP_W * MAP_H * sizeof(AStarNode));
 
 	a_star_node_map[start_y][start_x] = {start_x, start_y};
 
-	int        search_count             = 1;
-	AStarNode *to_search[MAP_W * MAP_H] = {&a_star_node_map[start_y][start_x]};
+	int         search_count = 0;
+	AStarNode **to_search    = arena_push_array(scratch.arena, MAP_W * MAP_H, AStarNode *);
+
+	to_search[search_count++] = &a_star_node_map[start_y][start_x];
 
 	int steps = 0;
 	while(to_search)
@@ -485,7 +473,21 @@ AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int targ
 
 		if(steps++ >= step_count || (curr->x == target_x && curr->y == target_y))
 		{
-			result = curr;
+			for(AStarNode *n = curr; n; n = n->next_in_path)
+			{
+				result.tile_count++;
+			}
+
+			result.tiles = arena_push_array(arena, result.tile_count, AStarPathTile);
+
+			int tile_idx = 0;
+			for(AStarNode *n = curr; n; n = n->next_in_path)
+			{
+				AStarPathTile *tile = &result.tiles[tile_idx++];
+				tile->x             = n->x;
+				tile->y             = n->y;
+			}
+
 			break;
 		}
 
@@ -534,6 +536,8 @@ AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int targ
 			}
 		}
 	}
+
+	arena_end_scratch(scratch);
 	
 	return result;
 }
@@ -663,6 +667,7 @@ void app_update(AppState *app, InputState *input)
 	glDisable(GL_TEXTURE_2D);
 	glBegin(GL_QUADS);
 
+#if 0
 	if(input->keys[KEY_LEFT].pressed)
 	{
 		app->step_count = max(app->step_count - 1, 0);
@@ -671,6 +676,16 @@ void app_update(AppState *app, InputState *input)
 	{
 		app->step_count = min(app->step_count + 1, 1024);
 	}
+
+	if(input->keys[KEY_UP].pressed)
+	{
+		app->station_b_idx = min(app->station_b_idx + 1, app->station_count - 1);
+	}
+	if(input->keys[KEY_DOWN].pressed)
+	{
+		app->station_b_idx = max(app->station_b_idx - 1, 0);
+	}
+#endif
 
 	for(int station_a_idx = 0; station_a_idx < app->station_count; ++station_a_idx)
 	{
@@ -690,8 +705,10 @@ void app_update(AppState *app, InputState *input)
 				int target_x = station_b->x + type_b.door_offset_x;
 				int target_y = station_b->y + type_b.door_offset_y;
 
-				AStarNode *old_path = a_star_path_find_old(start_x, start_y, target_x, target_y, app->step_count);
-				AStarNode *new_path = a_star_path_find_new(start_x, start_y, target_x, target_y, app->step_count);
+				TmpArena scratch = arena_begin_scratch(NULL, 0);
+
+				AStarPath old_path = a_star_path_find_old(start_x, start_y, target_x, target_y, 2048, scratch.arena);
+				//AStarPath new_path = a_star_path_find_new(start_x, start_y, target_x, target_y, 2048, scratch.arena);
 #if 0
 				int tile_count = 0;
 				while(old_path && new_path)
@@ -707,15 +724,21 @@ void app_update(AppState *app, InputState *input)
 					tile_count++;
 				}
 #else
-				for(; new_path; new_path = new_path->next_in_path)
+#if 0
+				for(int tile_idx = 0; tile_idx < new_path.tile_count; ++tile_idx)
 				{
-					draw_rect(new_path->x, new_path->y, 1, 1, 1, 1, 1);
+					AStarPathTile *tile = &new_path.tiles[tile_idx];
+					draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
 				}
-				for(; old_path; old_path = old_path->next_in_path)
+#else
+				for(int tile_idx = 0; tile_idx < old_path.tile_count; ++tile_idx)
 				{
-					draw_rect(old_path->x, old_path->y, 1, 1, 1, 1, 0);
+					AStarPathTile *tile = &old_path.tiles[tile_idx];
+					draw_rect(tile->x, tile->y, 1, 1, 1, 1, 0);
 				}
 #endif
+#endif
+				arena_end_scratch(scratch);
 			}
 		}
 	}
@@ -766,5 +789,11 @@ void app_update(AppState *app, InputState *input)
 	stbsp_snprintf(text, sizeof(text), "%.0ff/s", 1 / dt);
 	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
 	app->baseline += app->font.baseline_advance;
+
+#if 0
+	stbsp_snprintf(text, sizeof(text), "Step Count: %d, Station B Index: %d", app->step_count, app->station_b_idx);
+	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
+	app->baseline += app->font.baseline_advance;
+#endif
 }
 

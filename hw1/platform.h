@@ -4,6 +4,8 @@ enum KeyMap
 {
 	KEY_LEFT    = VK_LEFT,
 	KEY_RIGHT   = VK_RIGHT,
+	KEY_UP      = VK_UP,
+	KEY_DOWN    = VK_DOWN,
 	KEY_SPACE   = VK_SPACE,
 	KEY_CONTROL = VK_CONTROL,
 	KEY_MENU    = VK_MENU,

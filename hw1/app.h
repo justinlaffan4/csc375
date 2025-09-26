@@ -26,7 +26,7 @@
 #define is_aligned(x, a)      is_aligned_mask((x), (a) - 1)
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 4;
+const int DESIRED_STATION_COUNT = 24;
 
 struct Font
 {
@@ -47,18 +47,28 @@ struct AStarNode
 	bool visited;
 	bool search;
 
+	int heap_idx;
+
 	AStarNode *next_in_path;
 };
 
-struct AStarBinaryHeapNode
+struct AStarBinaryHeap
 {
-	AStarNode *n;
+	int         node_capacity;
+	int         node_count;
+	AStarNode **nodes;
+};
 
-	int                  l_child_count;
-	AStarBinaryHeapNode *l_child;
+struct AStarPathTile
+{
+	int x;
+	int y;
+};
 
-	int                  r_child_count;
-	AStarBinaryHeapNode *r_child;
+struct AStarPath
+{
+	int            tile_count;
+	AStarPathTile *tiles;
 };
 
 struct StationType
@@ -94,7 +104,10 @@ struct AppState
 	int     station_count;
 	Station stations[DESIRED_STATION_COUNT];
 
+#if 0
 	int step_count;
+	int station_b_idx;
+#endif
 };
 
 struct Arena
@@ -141,14 +154,10 @@ Font load_font(const char *filename);
 void draw_text(Font *font, float x, float y, float r, float g, float b, char *text);
 void draw_rect(float x, float y, float w, float h, float r, float g, float b);
 
-AStarBinaryHeapNode *a_star_node_remove_bottom  (AStarBinaryHeapNode *parent);
-int                  a_star_node_compare_f_score(AStarBinaryHeapNode *a, AStarBinaryHeapNode *b);
-void                 a_star_node_remove_fix     (AStarBinaryHeapNode *parent);
-AStarBinaryHeapNode *a_star_node_remove         (AStarBinaryHeapNode *parent);
-AStarBinaryHeapNode *a_star_node_insert         (AStarBinaryHeapNode *parent, AStarNode *to_insert);
+int a_star_node_compare_f_score(AStarNode *a, AStarNode *b);
 
-AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count);
-AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count);
+AStarPath a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena);
+AStarPath a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena);
 
 AppState app_make  (const char *font_filename, unsigned int rng_seed);
 void     app_update(AppState *app, InputState *input);
