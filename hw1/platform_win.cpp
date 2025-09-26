@@ -18,6 +18,47 @@
 // TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
 //       Probably something to do with OpenGL but don't know whether it is my fault or the AMD driver's fault.
 
+uint64_t vmem_page_size()
+{
+	uint64_t result = 4096;
+
+#if 0
+	SYSTEM_INFO info;
+	GetSystemInfo(&info);
+	result = (u64)info.dwPageSize;
+
+	assert(is_pow2(result));
+#endif
+
+	return result;
+}
+
+void *vmem_reserve(uint64_t size)
+{
+	void *result = VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_READWRITE);
+	return result;
+}
+
+bool vmem_commit(void *base, uint64_t size)
+{
+	assert(is_aligned(size, vmem_page_size()));
+
+	bool result = VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) != 0;
+	return result;
+}
+
+void vmem_decommit(void *base, uint64_t size)
+{
+	assert(is_aligned(size, vmem_page_size()));
+
+	VirtualFree(base, size, MEM_DECOMMIT);
+}
+
+void vmem_release(void *base)
+{
+	VirtualFree(base, 0, MEM_RELEASE);
+}
+
 void win_get_client_dim(HWND window, int *w, int *h)
 {
 	RECT rect;
@@ -115,13 +156,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	LARGE_INTEGER large_rng_seed;
 	QueryPerformanceCounter(&large_rng_seed);
+	unsigned int rng_seed = 69;
 
+	AppState   app   = app_make("c:/windows/fonts/arial.ttf", rng_seed);
 	InputState input = {};
-	input.rng_seed   = 69;
-
-	win_get_client_dim(window, &input.client_w, &input.client_h);
-
-	AppState app = app_make("c:/windows/fonts/arial.ttf", &input);
 
 	LARGE_INTEGER frequency;
 	QueryPerformanceFrequency(&frequency);

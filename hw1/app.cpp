@@ -1,4 +1,5 @@
 #include "app.h"
+#include "platform.h"
 
 const int MAP_W = 128;
 const int MAP_H = 128;
@@ -8,8 +9,145 @@ const int BITMAP_H = 512;
 
 int map[MAP_H][MAP_W];
 
-unsigned char tmp_bitmap[BITMAP_W * BITMAP_H];
-unsigned char ttf_buf[1 << 25];
+void arena_init(Arena *arena, uint64_t reserve_size)
+{
+	mem_zero(arena, sizeof(*arena));
+
+	arena->capacity = reserve_size;
+	arena->base     = vmem_reserve(arena->capacity);
+	assert(arena->base);
+}
+
+void arena_free(Arena *arena)
+{
+	vmem_decommit(arena->base, arena->commit_pos);
+	vmem_release (arena->base);
+}
+
+void *arena_get_top(Arena *arena)
+{
+	void *result = (uint8_t *)arena->base + arena->curr_pos;
+	return result;
+}
+
+void *arena_push(Arena *arena, uint64_t size, uint64_t allignment)
+{
+	void *result = NULL;
+
+	size = align_up(size, allignment);
+
+	uint64_t new_pos = arena->curr_pos + size;
+	if(new_pos <= arena->capacity)
+	{
+		if(new_pos > arena->commit_pos)
+		{
+			uint64_t commit_size = align_up(new_pos - arena->commit_pos, vmem_page_size());
+			if(vmem_commit((uint8_t *)arena->base + arena->commit_pos, commit_size))
+			{
+				arena->commit_pos += commit_size;
+				result             = arena_get_top(arena);
+				arena->curr_pos    = new_pos;
+			}
+		}else
+		{
+			result          = arena_get_top(arena);
+			arena->curr_pos = new_pos;
+		}
+	}
+
+	assert(result);
+
+	mem_zero(result, size);
+
+	return result;
+}
+
+void arena_pop_to(Arena *arena, uint64_t pos)
+{
+	if(pos < arena->curr_pos)
+	{
+		arena->curr_pos = pos;
+
+		uint64_t page_size    = vmem_page_size();
+		uint64_t alligned_pos = align_up(arena->curr_pos, page_size);
+		if(alligned_pos < arena->commit_pos)
+		{
+			uint64_t decommit_size = arena->commit_pos - alligned_pos;
+			vmem_decommit((uint8_t *)arena->base + alligned_pos, decommit_size);
+			arena->commit_pos -= decommit_size;
+		}
+	}
+}
+
+TmpArena tmp_arena_begin(Arena *arena)
+{
+	TmpArena result = {};
+	result.arena    = arena;
+	result.restore  = arena->curr_pos;
+	
+	return result;
+}
+
+void tmp_arena_end(TmpArena tmp)
+{
+	arena_pop_to(tmp.arena, tmp.restore);
+}
+
+ScratchArenas scratch_arenas_init()
+{
+	ScratchArenas result = {};
+	for(int i = 0; i < array_count(result.arenas); ++i)
+	{
+		arena_init(&result.arenas[i]);
+	}
+	return result;
+}
+
+Arena *arena_get_scratch(Arena **conflicts, int count)
+{
+	Arena *result = NULL;
+
+	thread_local ScratchArenas scratch = scratch_arenas_init();
+	for(int arena_idx = 0; arena_idx < array_count(scratch.arenas); ++arena_idx)
+	{
+		Arena *arena = &scratch.arenas[arena_idx];
+
+		bool is_conflict = false;
+		for(int conflict_idx = 0; conflict_idx < count; ++conflict_idx)
+		{
+			Arena *conflict = conflicts[conflict_idx];
+			if(conflict == arena)
+			{
+				is_conflict = false;
+				break;
+			}else
+			{
+				is_conflict = true;
+			}
+		}
+
+		if(!is_conflict)
+		{
+			result = arena;
+			break;
+		}
+	}
+
+	return result;
+}
+
+TmpArena arena_begin_scratch(Arena **conflicts, int count)
+{
+	Arena   *scratch = arena_get_scratch(conflicts, count);
+	TmpArena result  = tmp_arena_begin(scratch);
+
+	return result;
+}
+
+void arena_end_scratch(TmpArena scratch)
+{
+	tmp_arena_end(scratch);
+}
 
 unsigned int random(unsigned int *rng_seed)
 {
@@ -29,7 +167,12 @@ Font load_font(const char *filename)
 	FILE *file = fopen(filename, "rb");
 	if(file)
 	{
-		fread(ttf_buf, sizeof(char), array_count(ttf_buf), file);
+		TmpArena scratch = arena_begin_scratch(NULL, 0);
+
+		unsigned char *tmp_bitmap = arena_push_array(scratch.arena, BITMAP_W * BITMAP_H, unsigned char);
+		unsigned char *ttf_buf    = arena_push_array(scratch.arena, 1 << 25, unsigned char);
+
+		fread(ttf_buf, 1, 1 << 25, file);
 
 		stbtt_fontinfo font_info;
 		if(stbtt_InitFont(&font_info, ttf_buf, stbtt_GetFontOffsetForIndex(ttf_buf, 0)))
@@ -55,6 +198,7 @@ Font load_font(const char *filename)
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		}
 
+		arena_end_scratch(scratch);
 		fclose(file);
 	}
 
@@ -393,11 +537,13 @@ AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int targ
 	return result;
 }
 
-AppState app_make(const char *font_filename, InputState *input)
+AppState app_make(const char *font_filename, unsigned int rng_seed)
 {
 	AppState result = {};
 	result.font     = load_font(font_filename);
 	result.baseline = result.font.baseline_advance;
+
+	result.rng_seed = rng_seed;
 
 	result.station_types[0] = {0, 0, 1, 8, 8,  4, -1};
 	result.station_types[1] = {0, 1, 0, 4, 4,  4,  2};
@@ -426,8 +572,8 @@ regenerate_facility:
 			if(try_count++ < max_tries)
 			{
 				// Account for door placement
-				x = (random(&input->rng_seed) % bound_x) + 1;
-				y = (random(&input->rng_seed) % bound_y) + 1;
+				x = (random(&result.rng_seed) % bound_x) + 1;
+				y = (random(&result.rng_seed) % bound_y) + 1;
 
 				// Check for overlap (accounting for door) and regenerate the position if overlap exists
 				for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
