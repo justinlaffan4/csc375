@@ -18,6 +18,8 @@
 // TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
 //       Probably something to do with OpenGL but don't know whether it is my fault or the AMD driver's fault.
 
+InputState input;
+
 uint64_t vmem_page_size()
 {
 	uint64_t result = 4096;
@@ -83,6 +85,22 @@ LRESULT win_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param)
 				PAINTSTRUCT ps;
 				HDC device_ctx = BeginPaint(window, &ps);
 				EndPaint(window, &ps);
+			}break;
+			
+		case WM_SYSKEYDOWN:
+		case WM_SYSKEYUP:
+		case WM_KEYDOWN:
+		case WM_KEYUP:
+			{
+				uint32_t vk_code = (uint32_t)w_param;
+
+				bool key_was_down  = (l_param & (1 << 30)) != 0;
+				bool key_down      = (l_param & (1 << 31)) == 0;
+				bool key_repeating = key_was_down == key_down;
+
+				input.keys[vk_code].down     = key_down;
+				input.keys[vk_code].pressed  = key_down && !key_was_down;
+				input.keys[vk_code].released = !key_down && key_was_down;
 			}break;
 
 		default:
@@ -158,8 +176,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	QueryPerformanceCounter(&large_rng_seed);
 	unsigned int rng_seed = 69;
 
-	AppState   app   = app_make("c:/windows/fonts/arial.ttf", rng_seed);
-	InputState input = {};
+	AppState app = app_make("c:/windows/fonts/arial.ttf", rng_seed);
 
 	LARGE_INTEGER frequency;
 	QueryPerformanceFrequency(&frequency);
@@ -171,6 +188,12 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	for(;;)
 	{
+		for(int i = 0; i < array_count(input.keys); ++i)
+		{
+			input.keys[i].pressed  = false;
+			input.keys[i].released = false;
+		}
+
 		MSG msg;
 		while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{

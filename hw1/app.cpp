@@ -1,8 +1,7 @@
 #include "app.h"
-#include "platform.h"
 
-const int MAP_W = 128;
-const int MAP_H = 128;
+const int MAP_W = 32;
+const int MAP_H = 32;
 
 const int BITMAP_W = 512;
 const int BITMAP_H = 512;
@@ -381,7 +380,7 @@ AStarBinaryHeapNode *a_star_node_insert(AStarBinaryHeapNode *parent, AStarNode *
 	return result;
 }
 
-AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y)
+AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count)
 {
 	AStarNode *result = NULL;
 
@@ -393,11 +392,12 @@ AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int targ
 	AStarBinaryHeapNode *to_search = (AStarBinaryHeapNode *)calloc(1, sizeof(AStarBinaryHeapNode));
 	to_search->n = &a_star_node_map[start_y][start_x];
 
+	int steps = 0;
 	while(to_search)
 	{
 		AStarNode *curr = to_search->n;
 
-		if(curr->x == target_x && curr->y == target_y)
+		if(steps++ >= step_count || (curr->x == target_x && curr->y == target_y))
 		{
 			result = curr;
 			break;
@@ -452,7 +452,7 @@ AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int targ
 	return result;
 }
 
-AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y)
+AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count)
 {
 	AStarNode *result = NULL;
 
@@ -464,6 +464,7 @@ AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int targ
 	int        search_count             = 1;
 	AStarNode *to_search[MAP_W * MAP_H] = {&a_star_node_map[start_y][start_x]};
 
+	int steps = 0;
 	while(to_search)
 	{
 		int curr_idx = 0;
@@ -482,7 +483,7 @@ AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int targ
 
 		AStarNode *curr = to_search[curr_idx];
 
-		if(curr->x == target_x && curr->y == target_y)
+		if(steps++ >= step_count || (curr->x == target_x && curr->y == target_y))
 		{
 			result = curr;
 			break;
@@ -662,6 +663,15 @@ void app_update(AppState *app, InputState *input)
 	glDisable(GL_TEXTURE_2D);
 	glBegin(GL_QUADS);
 
+	if(input->keys[KEY_LEFT].pressed)
+	{
+		app->step_count = max(app->step_count - 1, 0);
+	}
+	if(input->keys[KEY_RIGHT].pressed)
+	{
+		app->step_count = min(app->step_count + 1, 1024);
+	}
+
 	for(int station_a_idx = 0; station_a_idx < app->station_count; ++station_a_idx)
 	{
 		Station *station_a = &app->stations[station_a_idx];
@@ -680,9 +690,9 @@ void app_update(AppState *app, InputState *input)
 				int target_x = station_b->x + type_b.door_offset_x;
 				int target_y = station_b->y + type_b.door_offset_y;
 
-				AStarNode *old_path = a_star_path_find_old(start_x, start_y, target_x, target_y);
-				AStarNode *new_path = a_star_path_find_new(start_x, start_y, target_x, target_y);
-
+				AStarNode *old_path = a_star_path_find_old(start_x, start_y, target_x, target_y, app->step_count);
+				AStarNode *new_path = a_star_path_find_new(start_x, start_y, target_x, target_y, app->step_count);
+#if 0
 				int tile_count = 0;
 				while(old_path && new_path)
 				{
@@ -696,10 +706,14 @@ void app_update(AppState *app, InputState *input)
 
 					tile_count++;
 				}
-#if 0
-				for(; n; n = n->next_in_path)
+#else
+				for(; new_path; new_path = new_path->next_in_path)
 				{
-					draw_rect(n->x, n->y, 1, 1, 1, 1, 0);
+					draw_rect(new_path->x, new_path->y, 1, 1, 1, 1, 1);
+				}
+				for(; old_path; old_path = old_path->next_in_path)
+				{
+					draw_rect(old_path->x, old_path->y, 1, 1, 1, 1, 0);
 				}
 #endif
 			}

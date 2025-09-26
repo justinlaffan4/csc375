@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform.h"
+
 #define array_count(arr) (sizeof(arr) / sizeof((arr)[0]))
 #define abs(x) ((x) > 0 ? (x) : -(x))
 
@@ -24,7 +26,7 @@
 #define is_aligned(x, a)      is_aligned_mask((x), (a) - 1)
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 24;
+const int DESIRED_STATION_COUNT = 4;
 
 struct Font
 {
@@ -91,14 +93,8 @@ struct AppState
 
 	int     station_count;
 	Station stations[DESIRED_STATION_COUNT];
-};
 
-struct InputState
-{
-	int client_w;
-	int client_h;
-
-	uint64_t elapsed_microsecs;
+	int step_count;
 };
 
 struct Arena
@@ -151,8 +147,8 @@ void                 a_star_node_remove_fix     (AStarBinaryHeapNode *parent);
 AStarBinaryHeapNode *a_star_node_remove         (AStarBinaryHeapNode *parent);
 AStarBinaryHeapNode *a_star_node_insert         (AStarBinaryHeapNode *parent, AStarNode *to_insert);
 
-AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y);
-AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y);
+AStarNode *a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count);
+AStarNode *a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count);
 
 AppState app_make  (const char *font_filename, unsigned int rng_seed);
 void     app_update(AppState *app, InputState *input);
