@@ -26,7 +26,7 @@
 #define is_aligned(x, a)      is_aligned_mask((x), (a) - 1)
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 24;
+const int DESIRED_STATION_COUNT = 2;
 
 struct Font
 {
@@ -44,12 +44,12 @@ struct AStarNode
 	int g; // Distance from start to node
 	int h; // Best distance (ignoring occlusions) from node to target
 
-	bool visited;
-	bool search;
+	bool opened;
+	bool closed;
 
 	int heap_idx;
 
-	AStarNode *next_in_path;
+	AStarNode *parent;
 };
 
 struct AStarBinaryHeap
@@ -104,7 +104,7 @@ struct AppState
 	int     station_count;
 	Station stations[DESIRED_STATION_COUNT];
 
-#if 0
+#if 1
 	int step_count;
 	int station_b_idx;
 #endif

@@ -174,7 +174,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	LARGE_INTEGER large_rng_seed;
 	QueryPerformanceCounter(&large_rng_seed);
-	unsigned int rng_seed = 69;
+	unsigned int rng_seed = 420;
 
 	AppState app = app_make("c:/windows/fonts/arial.ttf", rng_seed);
 
