@@ -378,37 +378,48 @@ void app_update(AppState *app, InputState *input)
 		app->station_b_idx = max(app->station_b_idx - 1, 0);
 	}
 #endif
+	TmpArena scratch = arena_begin_scratch(NULL, 0);
+
+	int            target_count = app->station_count;
+	AStarPathTile *targets      = arena_push_array(scratch.arena, target_count, AStarPathTile);
+
+	assert(target_count <= app->station_count);
+	for(int i = 0; i < target_count; ++i)
+	{
+		Station *station = &app->stations[i];
+		StationType type = app->station_types[station->type_idx];
+
+		AStarPathTile *target = &targets[i];
+
+		target->x = station->x + type.door_offset_x;
+		target->y = station->y + type.door_offset_y;
+	}
 
 	glBegin(GL_QUADS);
-	for(int station_a_idx = 0; station_a_idx < app->station_count; ++station_a_idx)
+	for(int station_idx = 0; station_idx < app->station_count; ++station_idx)
 	{
-		Station *station_a = &app->stations[station_a_idx];
-		StationType type_a = app->station_types[station_a->type_idx];
+		Station *station = &app->stations[station_idx];
+		StationType type = app->station_types[station->type_idx];
 
-		int start_x = station_a->x + type_a.door_offset_x;
-		int start_y = station_a->y + type_a.door_offset_y;
+		int start_x = station->x + type.door_offset_x;
+		int start_y = station->y + type.door_offset_y;
 
-		for(int station_b_idx = station_a_idx + 1; station_b_idx < app->station_count; ++station_b_idx)
+		int target_offset = station_idx + 1;
+		AStarPaths paths  = a_star_path_find_targets(start_x, start_y, targets + target_offset, target_count - target_offset, 2048, scratch.arena);
+
+		for(int path_idx = 0; path_idx < paths.count; ++path_idx)
 		{
-			Station *station_b = &app->stations[station_b_idx];
-			StationType type_b = app->station_types[station_b->type_idx];
+			AStarPath *path = &paths.paths[path_idx];
 
-			int target_x = station_b->x + type_b.door_offset_x;
-			int target_y = station_b->y + type_b.door_offset_y;
-
-			TmpArena scratch = arena_begin_scratch(NULL, 0);
-
-			AStarPath path = a_star_path_find(target_x, target_y, start_x, start_y, 2048, scratch.arena);
-
-			for(int tile_idx = 0; tile_idx < path.tile_count; ++tile_idx)
+			for(int tile_idx = 0; tile_idx < path->tile_count; ++tile_idx)
 			{
-				AStarPathTile *tile = &path.tiles[tile_idx];
+				AStarPathTile *tile = &path->tiles[tile_idx];
 				draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
 			}
-
-			arena_end_scratch(scratch);
 		}
 	}
+
+	arena_end_scratch(scratch);
 
 	for(int station_idx = 0; station_idx < app->station_count; ++station_idx)
 	{

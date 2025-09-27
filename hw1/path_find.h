@@ -35,6 +35,12 @@ struct AStarPath
 	AStarPathTile *tiles;
 };
 
+struct AStarPaths
+{
+	int        count;
+	AStarPath *paths;
+};
+
 int get_parent_idx (int idx);
 int get_l_child_idx(int idx);
 int get_r_child_idx(int idx);
@@ -50,4 +56,6 @@ void a_star_node_init(AStarNode *node, int x, int y, int target_x, int target_y,
 int  a_star_node_cmp (AStarNode *a, AStarNode *b);
 
 AStarPath a_star_path_find(int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena);
+
+AStarPaths a_star_path_find_targets(int start_x, int start_y, AStarPathTile *targets, int target_count, int max_step_count, Arena *arena);
 
