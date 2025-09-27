@@ -13,7 +13,10 @@
 #include "stb_truetype.h"
 
 #include "app.h"
+#include "path_find.h"
+
 #include "app.cpp"
+#include "path_find.cpp"
 
 // TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
 //       Probably something to do with OpenGL but don't know whether it is my fault or the AMD driver's fault.

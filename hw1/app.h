@@ -36,41 +36,6 @@ struct Font
 	stbtt_packedchar char_data['~' - ' '];
 };
 
-struct AStarNode
-{
-	int x;
-	int y;
-
-	int g; // Distance from start to node
-	int h; // Best distance (ignoring occlusions) from node to target
-
-	bool opened;
-	bool closed;
-
-	int heap_idx;
-
-	AStarNode *parent;
-};
-
-struct AStarBinaryHeap
-{
-	int         node_capacity;
-	int         node_count;
-	AStarNode **nodes;
-};
-
-struct AStarPathTile
-{
-	int x;
-	int y;
-};
-
-struct AStarPath
-{
-	int            tile_count;
-	AStarPathTile *tiles;
-};
-
 struct StationType
 {
 	float r;
@@ -153,11 +118,6 @@ Font load_font(const char *filename);
 
 void draw_text(Font *font, float x, float y, float r, float g, float b, char *text);
 void draw_rect(float x, float y, float w, float h, float r, float g, float b);
-
-int a_star_node_compare_f_score(AStarNode *a, AStarNode *b);
-
-AStarPath a_star_path_find_new(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena);
-AStarPath a_star_path_find_old(int start_x, int start_y, int target_x, int target_y, int step_count, Arena *arena);
 
 AppState app_make  (const char *font_filename, unsigned int rng_seed);
 void     app_update(AppState *app, InputState *input);
