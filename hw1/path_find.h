@@ -1,6 +1,11 @@
 #pragma once
 
-struct AStarNode
+#include "app.h"
+#include "common.h"
+
+const int GRID_NODE_HEAP_CAPACITY = MAP_W * MAP_H;
+
+struct GridNode
 {
 	int x;
 	int y;
@@ -13,49 +18,48 @@ struct AStarNode
 
 	int heap_idx;
 
-	AStarNode *parent;
+	GridNode *parent;
 };
 
-struct AStarBinaryHeap
+// Binary minimum heap
+struct GridNodeHeap
 {
-	int         node_capacity;
-	int         node_count;
-	AStarNode **nodes;
+	int        node_count;
+	GridNode **nodes;
 };
 
-struct AStarPathTile
+struct PathTile
 {
 	int x;
 	int y;
 };
 
-struct AStarPath
+struct FoundPath
 {
-	int            tile_count;
-	AStarPathTile *tiles;
+	int       tile_count;
+	PathTile *tiles;
 };
 
-struct AStarPaths
+struct FoundPaths
 {
 	int        count;
-	AStarPath *paths;
+	FoundPath *paths;
 };
+
+void grid_node_set_h(GridNode *node, int target_x, int target_y);
+int  grid_node_cmp  (GridNode *a, GridNode *b);
 
 int get_parent_idx (int idx);
 int get_l_child_idx(int idx);
 int get_r_child_idx(int idx);
 
-AStarBinaryHeap a_star_heap_make(int capacity, Arena *arena);
+GridNodeHeap heap_make(Arena *arena);
 
-void a_star_heap_swap      (AStarBinaryHeap *heap, int a, int b);
-void a_star_heap_heapify_up(AStarBinaryHeap *heap, int idx);
-void a_star_heap_insert    (AStarBinaryHeap *heap, AStarNode *node);
-void a_star_heap_remove_min(AStarBinaryHeap *heap);
+void heap_swap      (GridNodeHeap *heap, int a, int b);
+void heap_heapify_up(GridNodeHeap *heap, int idx);
+void heap_insert    (GridNodeHeap *heap, GridNode *node);
+void heap_remove_min(GridNodeHeap *heap);
 
-void a_star_node_init(AStarNode *node, int x, int y, int target_x, int target_y, int g, AStarNode *parent);
-int  a_star_node_cmp (AStarNode *a, AStarNode *b);
-
-AStarPath a_star_path_find(int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena);
-
-AStarPaths a_star_path_find_targets(int start_x, int start_y, AStarPathTile *targets, int target_count, int max_step_count, Arena *arena);
+FoundPaths path_find_targets(MapTile *map, int start_x, int start_y, PathTile *targets, int target_count, int max_step_count, Arena *arena);
+FoundPath  path_find_target (MapTile *map, int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena);
 

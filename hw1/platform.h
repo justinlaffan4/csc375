@@ -24,8 +24,9 @@ enum KeyMap
 struct KeyState
 {
 	bool down;
-	bool released;
+	bool held;
 	bool pressed;
+	bool released;
 };
 
 struct InputState

@@ -13,9 +13,11 @@
 #include "stb_truetype.h"
 
 #include "app.h"
+#include "common.h"
 #include "path_find.h"
 
 #include "app.cpp"
+#include "common.cpp"
 #include "path_find.cpp"
 
 // TODO: Find out what is causing the occasional flickering (happens sometimes on startup).
@@ -102,6 +104,7 @@ LRESULT win_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param)
 				bool key_repeating = key_was_down == key_down;
 
 				input.keys[vk_code].down     = key_down;
+				input.keys[vk_code].held     = key_down;
 				input.keys[vk_code].pressed  = key_down && !key_was_down;
 				input.keys[vk_code].released = !key_down && key_was_down;
 			}break;
@@ -179,7 +182,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	QueryPerformanceCounter(&large_rng_seed);
 	unsigned int rng_seed = 69;
 
-	AppState app = app_make("c:/windows/fonts/arial.ttf", rng_seed);
+	Arena permanent_arena = arena_make();
+	Arena transient_arena = arena_make();
+
+	AppState app = app_make("c:/windows/fonts/arial.ttf", rng_seed, &permanent_arena);
 
 	LARGE_INTEGER frequency;
 	QueryPerformanceFrequency(&frequency);
@@ -191,8 +197,12 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	for(;;)
 	{
+		mem_zero(transient_arena.base, transient_arena.curr_pos);
+		transient_arena.curr_pos = 0;
+
 		for(int i = 0; i < array_count(input.keys); ++i)
 		{
+			input.keys[i].held     = false;
 			input.keys[i].pressed  = false;
 			input.keys[i].released = false;
 		}
@@ -211,7 +221,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		win_get_client_dim(window, &input.client_w, &input.client_h);
 
-		app_update(&app, &input);
+		app_update(&app, &input, &transient_arena);
 
 		SwapBuffers(device_ctx);
 
@@ -227,8 +237,10 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 	}
 
 exit:
+#if 0
 	wglDeleteContext(gl_ctx);
 	DeleteDC(device_ctx);
 	DestroyWindow(window);
+#endif
 	return 0;
 }
