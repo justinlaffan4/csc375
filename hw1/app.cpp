@@ -1,7 +1,7 @@
 #include "app.h"
 
-const int MAP_W = 32;
-const int MAP_H = 32;
+const int MAP_W = 128;
+const int MAP_H = 128;
 
 const int BITMAP_W = 512;
 const int BITMAP_H = 512;
@@ -407,38 +407,65 @@ void jps_push_jump_point(AStarNode *a_star_node_map, AStarBinaryHeap *open_list,
 	}
 }
 
-void jps_traverse_pos_x(AStarNode *a_star_node_map, AStarBinaryHeap *open_list, int start_x, int start_y, int target_x, int target_y, AStarNode *parent)
+bool jps_traverse_pos_x(AStarNode *a_star_node_map, AStarBinaryHeap *open_list, int start_x, int start_y, int target_x, int target_y, AStarNode *parent)
 {
+	bool result = false;
+
 	for(int x = start_x; x < MAP_W; ++x)
 	{
-		draw_rect(x, start_y, 1, 1, 0, 1, 1);
+		if(!map_tile_walkable(x, start_y))
+		{
+			break;
+		}
+
+		//draw_rect(x, start_y, 1, 1, 0, 1, 1);
 
 		bool false_neighbor0 = map_tile_walkable(x, start_y + 1) && !map_tile_walkable(x - 1, start_y + 1);
 		bool false_neighbor1 = map_tile_walkable(x, start_y - 1) && !map_tile_walkable(x - 1, start_y - 1);
 
-		if(false_neighbor0 || false_neighbor1)
+		if((x == target_x && start_y == target_y) || (false_neighbor0 || false_neighbor1))
 		{
-			jps_push_jump_point(a_star_node_map, open_list, x, start_y, target_x, target_y, parent, x - start_x);
+			int distance_to_parent = x - parent->x;
+			jps_push_jump_point(a_star_node_map, open_list, x, start_y, target_x, target_y, parent, distance_to_parent);
+			result = true;
 			break;
 		}
 	}
+	
+	return result;
 }
 
-void jps_traverse_neg_x(AStarNode *a_star_node_map, AStarBinaryHeap *open_list, int start_x, int start_y, int target_x, int target_y, AStarNode *parent)
+bool jps_traverse_neg_x(AStarNode *a_star_node_map, AStarBinaryHeap *open_list, int start_x, int start_y, int target_x, int target_y, AStarNode *parent)
 {
+	bool result = false;
+
 	for(int x = start_x; x >= 0; --x)
 	{
-		draw_rect(x, start_y, 1, 1, 0.5f, 1, 0.5f);
+		if(!map_tile_walkable(x, start_y))
+		{
+			break;
+		}
+
+		//draw_rect(x, start_y, 1, 1, 0.5f, 1, 0.5f);
 
 		bool false_neighbor0 = map_tile_walkable(x, start_y + 1) && !map_tile_walkable(x + 1, start_y + 1);
 		bool false_neighbor1 = map_tile_walkable(x, start_y - 1) && !map_tile_walkable(x + 1, start_y - 1);
 
-		if(false_neighbor0 || false_neighbor1)
+		if(x == target_x && start_y == target_y)
 		{
-			jps_push_jump_point(a_star_node_map, open_list, x, start_y, target_x, target_y, parent, start_x - x);
+			int breakpoint = 0;
+		}
+
+		if((x == target_x && start_y == target_y) || (false_neighbor0 || false_neighbor1))
+		{
+			int distance_to_parent = parent->x - x;
+			jps_push_jump_point(a_star_node_map, open_list, x, start_y, target_x, target_y, parent, distance_to_parent);
+			result = true;
 			break;
 		}
 	}
+
+	return result;
 }
 
 AStarPath jps_path_find(int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena)
@@ -481,11 +508,7 @@ AStarPath jps_path_find(int start_x, int start_y, int target_x, int target_y, in
 			break;
 		}
 
-		a_star_heap_remove_min(&open_list);
 		curr->closed = true;
-
-		int neighbor_offsets_x[] = {1, 0, -1,  0};
-		int neighbor_offsets_y[] = {0, 1,  0, -1};
 
 		AStarNodeNeighbors neighbors = {};
 		if(curr->parent)
@@ -497,6 +520,11 @@ AStarPath jps_path_find(int start_x, int start_y, int target_x, int target_y, in
 			dx = dx / max(abs(dx), 1);
 			dy = dy / max(abs(dy), 1);
 
+			if(dy < 0)
+			{
+				int breakpoint = 0;
+			}
+
 			if(dx != 0)
 			{
 				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x + dx, curr->y    );
@@ -504,7 +532,7 @@ AStarPath jps_path_find(int start_x, int start_y, int target_x, int target_y, in
 				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x,      curr->y - 1);
 			}else if(dy != 0)
 			{
-				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x,     curr->y + dy);
+				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x,     curr->y - dy);
 				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x + 1, curr->y     );
 				a_star_node_push_neighbor(&neighbors, a_star_node_map, curr->x - 1, curr->y     );
 			}
@@ -529,64 +557,81 @@ AStarPath jps_path_find(int start_x, int start_y, int target_x, int target_y, in
 			int dx = to_x - from_x;
 			int dy = to_y - from_y;
 
-			if(to_x == target_x && to_y == target_y)
+			if(dx > 0)
 			{
-				int distance_from_curr = 0;
-				if(dx != 0)
-				{
-					distance_from_curr = abs(dx);
-				}else if(dy != 0)
-				{
-					distance_from_curr = abs(dy);
-				}
-
-				jps_push_jump_point(a_star_node_map, &open_list, to_x, to_y, target_x, target_y, curr, distance_from_curr);
-			}else
+				jps_traverse_pos_x(a_star_node_map, &open_list, to_x, to_y, target_x, target_y, curr);
+			}else if(dx < 0)
 			{
-				if(dx > 0)
-				{
-					jps_traverse_pos_x(a_star_node_map, &open_list, to_x, to_y, target_x, target_y, curr);
-				}else if(dx < 0)
-				{
-					jps_traverse_neg_x(a_star_node_map, &open_list, to_x, to_y, target_x, target_y, curr);
-				}
+				jps_traverse_neg_x(a_star_node_map, &open_list, to_x, to_y, target_x, target_y, curr);
+			}
 
-				if(dy > 0)
+			if(dy > 0)
+			{
+				for(int y = to_y; y < MAP_H; ++y)
 				{
-					for(int y = to_y; y < MAP_H; ++y)
+					if(!map_tile_walkable(to_x, y))
 					{
-						draw_rect(to_x, y, 1, 1, 1.0f, 0.0f, 0.5f);
+						break;
+					}
 
-						bool false_neighbor0 = map_tile_walkable(to_x + 1, y) && !map_tile_walkable(from_x + 1, y + 1);
-						bool false_neighbor1 = map_tile_walkable(to_x - 1, y) && !map_tile_walkable(from_x - 1, y + 1);
+					//draw_rect(to_x, y, 1, 1, 1.0f, 0.0f, 0.5f);
 
-						if(false_neighbor0 || false_neighbor1)
+					bool false_neighbor0 = map_tile_walkable(to_x + 1, y) && !map_tile_walkable(from_x + 1, y - 1);
+					bool false_neighbor1 = map_tile_walkable(to_x - 1, y) && !map_tile_walkable(from_x - 1, y - 1);
+
+					int distance_to_parent = y - curr->y;
+					if((to_x == target_x && y == target_y) || (false_neighbor0 || false_neighbor1))
+					{
+						jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, distance_to_parent);
+						break;
+					}else
+					{
+						AStarNode *jump_point = &a_star_node_map[y * MAP_W + to_x];
+						a_star_node_init(jump_point, to_x, y, target_x, target_y, curr->g + distance_to_parent, curr);
+						jump_point->opened = false;
+
+						bool found_jump_point0 = jps_traverse_pos_x(a_star_node_map, &open_list, to_x + 1, y, target_x, target_y, jump_point);
+						bool found_jump_point1 = jps_traverse_neg_x(a_star_node_map, &open_list, to_x - 1, y, target_x, target_y, jump_point);
+
+						if(found_jump_point0 || found_jump_point1)
 						{
-							jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, y - to_y);
+							jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, distance_to_parent);
 							break;
-						}else
-						{
-							jps_traverse_pos_x(a_star_node_map, &open_list, to_x + 1, y, target_x, target_y, curr);
-							jps_traverse_neg_x(a_star_node_map, &open_list, to_x - 1, y, target_x, target_y, curr);
 						}
 					}
-				}else if(dy < 0)
+				}
+			}else if(dy < 0)
+			{
+				for(int y = to_y; y >= 0; --y)
 				{
-					for(int y = to_y; y >= 0; --y)
+					if(!map_tile_walkable(to_x, y))
 					{
-						draw_rect(to_x, y, 1, 1, 1.0f, 0.5f, 0.5f);
+						break;
+					}
 
-						bool false_neighbor0 = map_tile_walkable(to_x + 1, y) && !map_tile_walkable(from_x + 1, y - 1);
-						bool false_neighbor1 = map_tile_walkable(to_x - 1, y) && !map_tile_walkable(from_x - 1, y - 1);
+					//draw_rect(to_x, y, 1, 1, 1.0f, 0.5f, 0.5f);
 
-						if(false_neighbor0 || false_neighbor1)
+					bool false_neighbor0 = map_tile_walkable(to_x + 1, y) && !map_tile_walkable(from_x + 1, y + 1);
+					bool false_neighbor1 = map_tile_walkable(to_x - 1, y) && !map_tile_walkable(from_x - 1, y + 1);
+
+					int distance_to_parent = curr->y - y;
+					if((to_x == target_x && y == target_y) || (false_neighbor0 || false_neighbor1))
+					{
+						jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, distance_to_parent);
+						break;
+					}else
+					{
+						AStarNode *jump_point = &a_star_node_map[y * MAP_W + to_x];
+						a_star_node_init(jump_point, to_x, y, target_x, target_y, curr->g + distance_to_parent, curr);
+						jump_point->opened = false;
+
+						bool found_jump_point0 = jps_traverse_pos_x(a_star_node_map, &open_list, to_x + 1, y, target_x, target_y, jump_point);
+						bool found_jump_point1 = jps_traverse_neg_x(a_star_node_map, &open_list, to_x - 1, y, target_x, target_y, jump_point);
+
+						if(found_jump_point0 || found_jump_point1)
 						{
-							jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, to_y - y);
+							jps_push_jump_point(a_star_node_map, &open_list, to_x, y, target_x, target_y, curr, distance_to_parent);
 							break;
-						}else
-						{
-							jps_traverse_pos_x(a_star_node_map, &open_list, to_x + 1, y, target_x, target_y, curr);
-							jps_traverse_neg_x(a_star_node_map, &open_list, to_x - 1, y, target_x, target_y, curr);
 						}
 					}
 				}
@@ -911,7 +956,6 @@ void app_update(AppState *app, InputState *input)
 	glLoadIdentity();
 
 	glDisable(GL_TEXTURE_2D);
-	glBegin(GL_QUADS);
 
 #if 1
 	if(input->keys[KEY_LEFT].pressed)
@@ -952,7 +996,7 @@ void app_update(AppState *app, InputState *input)
 			TmpArena scratch = arena_begin_scratch(NULL, 0);
 
 			//AStarPath old_path = a_star_path_find_old(start_x, start_y, target_x, target_y, 2048, scratch.arena);
-			AStarPath new_path = jps_path_find(target_x, target_y, start_x, start_y, app->step_count, scratch.arena);
+			AStarPath new_path = jps_path_find(target_x, target_y, start_x, start_y, 2048, scratch.arena);
 #if 0
 			int tile_count = 0;
 			while(old_path && new_path)
@@ -969,11 +1013,26 @@ void app_update(AppState *app, InputState *input)
 			}
 #else
 #if 1
+			glBegin(GL_QUADS);
 			for(int tile_idx = 0; tile_idx < new_path.tile_count; ++tile_idx)
 			{
-				AStarPathTile *tile = &new_path.tiles[tile_idx];
+				AStarPathTile *tile = &new_path.tiles[tile_idx + 0];
 				draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
 			}
+			glEnd();
+
+			glBegin(GL_LINES);
+			for(int tile_idx = 1; tile_idx < new_path.tile_count; ++tile_idx)
+			{
+				AStarPathTile *tile0 = &new_path.tiles[tile_idx - 1];
+				AStarPathTile *tile1 = &new_path.tiles[tile_idx + 0];
+
+				glBegin(GL_LINES);
+				glVertex2f(tile0->x, tile0->y);
+				glVertex2f(tile1->x, tile1->y);
+				glEnd();
+			}
+			glEnd();
 #else
 			for(int tile_idx = 0; tile_idx < old_path.tile_count; ++tile_idx)
 			{
@@ -986,6 +1045,7 @@ void app_update(AppState *app, InputState *input)
 		}
 	}
 
+	glBegin(GL_QUADS);
 	for(int station_idx = 0; station_idx < app->station_count; ++station_idx)
 	{
 		Station *station = &app->stations[station_idx];

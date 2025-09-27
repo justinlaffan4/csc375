@@ -26,7 +26,7 @@
 #define is_aligned(x, a)      is_aligned_mask((x), (a) - 1)
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 2;
+const int DESIRED_STATION_COUNT = 48;
 
 struct Font
 {
