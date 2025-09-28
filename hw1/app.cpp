@@ -95,13 +95,13 @@ bool test_overlap(Factory *factory, int x, int y, int w, int h)
 	return result;
 }
 
-void write_to_map(Factory *factory, int x, int y, int w, int h)
+void write_to_map(Factory *factory, int x, int y, int w, int h, int val)
 {
 	for(int map_x = x; map_x < x + w; ++map_x)
 	{
 		for(int map_y = y; map_y < y + h; ++map_y)
 		{
-			factory->map[map_y * MAP_W + map_x] = 1;
+			factory->map[map_y * MAP_W + map_x] = val;
 		}
 	}
 }
@@ -145,7 +145,7 @@ regenerate_facility:
 
 			if(try_count < max_tries)
 			{
-				write_to_map(&result, x, y, w, h);
+				write_to_map(&result, x, y, w, h, 1);
 
 				Station *station  = &result.stations[result.station_count++];
 				station->type_idx = type_idx;
@@ -444,11 +444,11 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 
 			if(!test_overlap(&child_factory, station->x, station->y, station_type->w, station_type->h))
 			{
-				write_to_map(&child_factory, station->x, station->y, station_type->w, station_type->h);
+				write_to_map(&child_factory, station->x, station->y, station_type->w, station_type->h, 1);
 				child_factory.stations[child_factory.station_count++] = *station;
 			}else if(!test_overlap(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h))
 			{
-				write_to_map(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h);
+				write_to_map(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h, 1);
 				child_factory.stations[child_factory.station_count++] = *backup_station;
 			}
 		}
@@ -456,6 +456,43 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 		if(child_factory.station_count == DESIRED_STATION_COUNT)
 		{
 			next_population[next_population_count++] = child_factory;
+		}
+	}
+
+	for(int factory_idx = 0; factory_idx < next_population_count; ++factory_idx)
+	{
+		Factory *factory = &next_population[factory_idx];
+
+		for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
+		{
+			Station     *station      = &factory->stations[station_idx];
+			StationType *station_type = &app->station_types[station->type_idx]; 
+
+			int mutation_chance = random(&app->rng_seed) % 100;
+			if(mutation_chance < 2)
+			{
+				int x = station->x;
+				int y = station->y;
+				int w = station_type->w;
+				int h = station_type->h;
+
+				int shift_x_count = (random(&app->rng_seed) % 4) - 2;
+				int shift_y_count = (random(&app->rng_seed) % 4) - 2;
+
+				int new_x = x + shift_x_count;
+				int new_y = y + shift_x_count;
+
+				write_to_map(factory, x, y, w, h, 0);
+				if(!test_overlap(factory, new_x, new_y, w, h))
+				{
+					write_to_map(factory, new_x, new_y, w, h, 1);
+					station->x = new_x;
+					station->y = new_y;
+				}else
+				{
+					write_to_map(factory, x, y, w, h, 1);
+				}
+			}
 		}
 	}
 
