@@ -68,6 +68,8 @@ struct AppState
 	int      population_count;
 	Factory *population;
 
+	int generation_count;
+
 	int step_count;
 };
 

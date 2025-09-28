@@ -77,6 +77,35 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b)
 	glVertex2f(x,     y + h);
 }
 
+// Check for overlap (accounting for door) and return true if overlap exists
+bool test_overlap(Factory *factory, int x, int y, int w, int h)
+{
+	bool result = false;
+	for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+	{
+		for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
+		{
+			if(factory->map[map_y * MAP_W + map_x] == 1)
+			{
+				result = true;
+				break;
+			}
+		}
+	}
+	return result;
+}
+
+void write_to_map(Factory *factory, int x, int y, int w, int h)
+{
+	for(int map_x = x; map_x < x + w; ++map_x)
+	{
+		for(int map_y = y; map_y < y + h; ++map_y)
+		{
+			factory->map[map_y * MAP_W + map_x] = 1;
+		}
+	}
+}
+
 Factory generate_factory(AppState *app, Arena *arena)
 {
 	Factory result  = {};
@@ -108,28 +137,15 @@ regenerate_facility:
 				x = (random(&app->rng_seed) % bound_x) + 1;
 				y = (random(&app->rng_seed) % bound_y) + 1;
 
-				// Check for overlap (accounting for door) and regenerate the position if overlap exists
-				for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+				if(test_overlap(&result, x, y, w, h))
 				{
-					for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
-					{
-						if(result.map[map_y * MAP_W + map_x] == 1)
-						{
-							goto regenerate_facility;
-						}
-					}
+					goto regenerate_facility;
 				}
 			}
 
 			if(try_count < max_tries)
 			{
-				for(int map_x = x; map_x < x + w; ++map_x)
-				{
-					for(int map_y = y; map_y < y + h; ++map_y)
-					{
-						result.map[map_y * MAP_W + map_x] = 1;
-					}
-				}
+				write_to_map(&result, x, y, w, h);
 
 				Station *station  = &result.stations[result.station_count++];
 				station->type_idx = type_idx;
@@ -144,8 +160,12 @@ regenerate_facility:
 
 void merge_sort_factories(Factory *sorted, Factory *unsorted, int count)
 {
-	if(count == 1)
+	if(count <= 0)
 	{
+		return;
+	}else if(count == 1)
+	{
+		sorted[0] = unsorted[0];
 		return;
 	}else if(count == 2)
 	{
@@ -266,25 +286,16 @@ AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *perma
 	result.station_types[2] = {0, 1, 1, 2, 2,  1,  2};
 	result.station_types[3] = {1, 0, 0, 1, 1, -1,  0};
 
-	TmpArena scratch = arena_begin_scratch(NULL, 0);
-
-	Factory *unsorted_population = arena_push_array(scratch.arena, DESIRED_POPULATION_COUNT, Factory);
+	result.population = arena_push_array(permanent_arena, DESIRED_POPULATION_COUNT, Factory);
 
 	for(int i = 0; i < DESIRED_POPULATION_COUNT; ++i)
 	{
 		Factory factory = generate_factory(&result, permanent_arena);
 		if(factory.station_count == DESIRED_STATION_COUNT)
 		{
-			factory.fitness_score = get_fitness_score(&result, &factory);
-
-			unsorted_population[result.population_count++] = factory;
+			result.population[result.population_count++] = factory;
 		}
 	}
-
-	result.population = arena_push_array(permanent_arena, DESIRED_POPULATION_COUNT, Factory);
-	merge_sort_factories(result.population, unsorted_population, result.population_count);
-
-	arena_end_scratch(scratch);
 
 	return result;
 }
@@ -345,30 +356,122 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 		app->step_count = min(app->step_count + 1, MAX_STEP_COUNT);
 	}
 
-	int min_fitness_score = app->population[app->population_count - 1].fitness_score;
-	int max_fitness_score = app->population[0].fitness_score;
+	if(app->generation_count == 7)
+	{
+		int breakpoint = 0;
+	}
 
-	int selection_fitness_score = (random(&app->rng_seed) % (max_fitness_score - min_fitness_score)) + min_fitness_score;
+	int      selected_population_count    = 0;
+	Factory *unsorted_selected_population = arena_push_array(transient_arena, app->population_count, Factory);
 
-	int      selected_population_count = 0;
-	Factory *selected_population       = arena_push_array(transient_arena, app->population_count, Factory);
-
+	int min_fitness_score = INT_MAX;
+	int max_fitness_score = 0;
 	for(int factory_idx = 0; factory_idx < app->population_count; ++factory_idx)
 	{
 		Factory *factory = &app->population[factory_idx];
 
 		factory->fitness_score = get_fitness_score(app, factory);
 
-		if(factory->fitness_score >= selection_fitness_score)
+		min_fitness_score = min(factory->fitness_score, min_fitness_score);
+		max_fitness_score = max(factory->fitness_score, max_fitness_score);
+
+		unsorted_selected_population[selected_population_count++] = *factory;
+	}
+
+	// The problem with this approach is handling the case where only 1 factory makes it (which happened to me)
+	//int selection_fitness_score = (random(&app->rng_seed) % (max_fitness_score - min_fitness_score)) + min_fitness_score;
+
+	int keep_evens = random(&app->rng_seed) % 2;
+
+	for(int factory_idx = selected_population_count - 1; factory_idx >= 0; --factory_idx)
+	{
+		Factory *factory = &unsorted_selected_population[factory_idx];
+#if 0
+		if(factory->fitness_score < selection_fitness_score)
+#else
+		if((factory_idx % 2) == keep_evens)
+#endif
 		{
-			selected_population[selected_population_count++] = *factory;
+			*factory = unsorted_selected_population[--selected_population_count];
 		}
 	}
 
-	merge_sort_factories(app->population, selected_population, selected_population_count);
-	app->population_count = selected_population_count;
+	Factory *selected_population = arena_push_array(transient_arena, selected_population_count, Factory);
+	merge_sort_factories(selected_population, unsorted_selected_population, selected_population_count);
 
-	Factory *factory = &app->population[0];
+	int      next_population_count = 0;
+	Factory *next_population       = arena_push_array(transient_arena, DESIRED_POPULATION_COUNT, Factory);
+
+	for(int factory_idx = 0; factory_idx < DESIRED_POPULATION_COUNT; ++factory_idx)
+	{
+		Factory child_factory = {};
+
+		child_factory.map      = arena_push_array(transient_arena, MAP_W * MAP_H, MapTile);
+		child_factory.stations = arena_push_array(transient_arena, DESIRED_STATION_COUNT, Station);
+
+		int parent_factory0_idx = random(&app->rng_seed) % selected_population_count;
+		int parent_factory1_idx = random(&app->rng_seed) % selected_population_count;
+
+		Factory *parent_factory0 = &selected_population[parent_factory0_idx];
+		Factory *parent_factory1 = &selected_population[parent_factory1_idx];
+
+		if(parent_factory1->fitness_score > parent_factory0->fitness_score)
+		{
+			swap(parent_factory0, parent_factory1);
+		}
+
+		for(int station_idx = 0; station_idx < parent_factory0->station_count; ++station_idx)
+		{
+			Factory *parent_factory        = NULL;
+			Factory *backup_parent_factory = NULL;
+
+			int chance = random(&app->rng_seed) % 100;
+			if(chance < 80)
+			{
+				parent_factory        = parent_factory0;
+				backup_parent_factory = parent_factory1;
+			}else
+			{
+				parent_factory        = parent_factory1;
+				backup_parent_factory = parent_factory0;
+			}
+
+			Station     *station      = &parent_factory->stations[station_idx];
+			StationType *station_type = &app->station_types[station->type_idx]; 
+
+			Station     *backup_station      = &backup_parent_factory->stations[station_idx];
+			StationType *backup_station_type = &app->station_types[backup_station->type_idx]; 
+
+			if(!test_overlap(&child_factory, station->x, station->y, station_type->w, station_type->h))
+			{
+				write_to_map(&child_factory, station->x, station->y, station_type->w, station_type->h);
+				child_factory.stations[child_factory.station_count++] = *station;
+			}else if(!test_overlap(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h))
+			{
+				write_to_map(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h);
+				child_factory.stations[child_factory.station_count++] = *backup_station;
+			}
+		}
+
+		if(child_factory.station_count == DESIRED_STATION_COUNT)
+		{
+			next_population[next_population_count++] = child_factory;
+		}
+	}
+
+	for(int factory_idx = 0; factory_idx < next_population_count; ++factory_idx)
+	{
+		Factory *dst = &app->population[factory_idx];
+		Factory *src = &next_population[factory_idx];
+
+		mem_copy_array(dst->map,      MAP_W * MAP_H,      src->map,      MAP_W * MAP_H);
+		mem_copy_array(dst->stations, dst->station_count, src->stations, src->station_count);
+
+		dst->station_count = src->station_count;
+	}
+	app->population_count = next_population_count;
+
+	Factory *factory = &selected_population[0];
 
 	glBegin(GL_QUADS);
 	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
@@ -419,6 +522,10 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 	app->baseline += app->font.baseline_advance;
 
 	stbsp_snprintf(text, sizeof(text), "Step Count: %d", app->step_count);
+	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
+	app->baseline += app->font.baseline_advance;
+
+	stbsp_snprintf(text, sizeof(text), "Generation Count: %d", app->generation_count++);
 	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
 	app->baseline += app->font.baseline_advance;
 
