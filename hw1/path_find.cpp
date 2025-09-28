@@ -139,7 +139,7 @@ void push_path(FoundPaths *paths, GridNode *node, Arena *arena)
 	}
 }
 
-FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targets, int target_count, int max_step_count, Arena *arena)
+FoundPaths path_find_targets(MapTile *map, int start_x, int start_y, PathTile *targets, int target_count, int max_step_count, Arena *arena)
 {
 	FoundPaths result = {};
 	result.paths      = arena_push_array(arena, target_count, FoundPath);
@@ -147,8 +147,8 @@ FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targe
 	Arena *conflicts[] = {arena};
 	TmpArena scratch   = arena_begin_scratch(conflicts, array_count(conflicts));
 
-	GridNode *grid_node_map = arena_push_array(scratch.arena, map->w * map->h, GridNode);
-	GridNode *start_node    = &grid_node_map[start_y * map->w + start_x];
+	GridNode *grid_node_map = arena_push_array(scratch.arena, MAP_W * MAP_H, GridNode);
+	GridNode *start_node    = &grid_node_map[start_y * MAP_W + start_x];
 
 	start_node->x      = start_x;
 	start_node->y      = start_y;
@@ -169,7 +169,7 @@ FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targe
 			heap_insert(&open_list, start_node);
 		}else
 		{
-			GridNode *target_node = &grid_node_map[target_y * map->w + target_x];
+			GridNode *target_node = &grid_node_map[target_y * MAP_W + target_x];
 			if(target_node->closed)
 			{
 				push_path(&result, target_node, arena);
@@ -212,9 +212,9 @@ FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targe
 				int neighbor_x = curr->x + neighbor_offsets_x[neighbor_idx];
 				int neighbor_y = curr->y + neighbor_offsets_y[neighbor_idx];
 
-				if(neighbor_x >= 0 && neighbor_x < map->w && neighbor_y >= 0 && neighbor_y < map->h && map->tiles[neighbor_y * map->w + neighbor_x] == 0)
+				if(neighbor_x >= 0 && neighbor_x < MAP_W && neighbor_y >= 0 && neighbor_y < MAP_H && map[neighbor_y * MAP_W + neighbor_x] == 0)
 				{
-					GridNode *neighbor = &grid_node_map[neighbor_y * map->w + neighbor_x];
+					GridNode *neighbor = &grid_node_map[neighbor_y * MAP_W + neighbor_x];
 
 					if(!neighbor->closed)
 					{
@@ -249,7 +249,7 @@ FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targe
 	return result;
 }
 
-FoundPath path_find_target(Map *map, int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena)
+FoundPath path_find_target(MapTile *map, int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena)
 {
 	PathTile   target = {target_x, target_y};
 	FoundPaths paths  = path_find_targets(map, start_x, start_y, &target, 1, max_step_count, arena);
