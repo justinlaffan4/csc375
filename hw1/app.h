@@ -8,10 +8,12 @@ const int MAP_H = 128;
 
 const int STATION_TYPE_COUNT = 4;
 const int DESIRED_STATION_COUNT = 48;
-const int POPULATION_COUNT = 100;
+const int DESIRED_POPULATION_COUNT = 100;
 
 const int GLYPH_BITMAP_W = 512;
 const int GLYPH_BITMAP_H = 512;
+
+const int MAX_STEP_COUNT = 1024;
 
 struct Font
 {
@@ -50,6 +52,8 @@ struct Factory
 
 	int      station_count;
 	Station *stations;
+
+	int fitness_score;
 };
 
 struct AppState
@@ -61,8 +65,8 @@ struct AppState
 
 	StationType station_types[STATION_TYPE_COUNT];
 	
-	int      factory_count;
-	Factory *factories;
+	int      population_count;
+	Factory *population;
 
 	int step_count;
 };

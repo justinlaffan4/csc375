@@ -142,6 +142,117 @@ regenerate_facility:
 	return result;
 }
 
+void merge_sort_factories(Factory *sorted, Factory *unsorted, int count)
+{
+	if(count == 1)
+	{
+		return;
+	}else if(count == 2)
+	{
+		Factory *a = &unsorted[0];
+		Factory *b = &unsorted[1];
+		if (b->fitness_score > a->fitness_score)
+		{
+			Factory tmp = *a;
+
+			*a = *b;
+			*b = tmp;
+		}
+		return;
+	}
+
+	int l = count / 2;
+	int r = count - l;
+
+	merge_sort_factories(    sorted,     unsorted, l);
+	merge_sort_factories(&sorted[l], &unsorted[l], r);
+
+	Factory *src_l = unsorted;
+	Factory *src_r = &unsorted[l];
+
+	Factory *end_l = src_r;
+	Factory *end_r = &unsorted[count];
+
+	for(int i = 0; i < count; ++i)
+	{
+		Factory *record = &sorted[i];
+
+		if(src_l == end_l)
+		{
+			*record = *src_r++;
+		}else if(src_r == end_r)
+		{
+			*record = *src_l++;
+		}else if(src_l->fitness_score > src_r->fitness_score)
+		{
+			*record = *src_l++;
+		}else
+		{
+			*record = *src_r++;
+		}
+	}
+
+	memcpy(unsorted, sorted, count * sizeof(Factory));
+}
+
+int get_fitness_score(AppState *app, Factory *factory)
+{
+	int result = 105000;
+
+	TmpArena scratch = arena_begin_scratch(NULL, 0);
+
+	int       target_count = factory->station_count;
+	PathTile *targets      = arena_push_array(scratch.arena, target_count, PathTile);
+
+	assert(target_count <= factory->station_count);
+	for(int i = 0; i < target_count; ++i)
+	{
+		Station *station = &factory->stations[i];
+		StationType type = app->station_types[station->type_idx];
+
+		PathTile *target = &targets[i];
+
+		target->x = station->x + type.door_offset_x;
+		target->y = station->y + type.door_offset_y;
+	}
+
+	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
+	{
+		Station *station = &factory->stations[station_idx];
+		StationType type = app->station_types[station->type_idx];
+
+		int start_x = station->x + type.door_offset_x;
+		int start_y = station->y + type.door_offset_y;
+
+		int step_count = MAX_STEP_COUNT;
+		if(app->step_count > 0)
+		{
+			step_count = app->step_count;
+		}
+
+		int target_offset = station_idx + 1;
+		FoundPaths paths  = path_find_targets(factory->map, start_x, start_y, targets + target_offset, target_count - target_offset, step_count, scratch.arena);
+
+		for(int path_idx = 0; path_idx < paths.count; ++path_idx)
+		{
+			FoundPath *path = &paths.paths[path_idx];
+
+			result -= path->tile_count;
+#if 0
+			for(int tile_idx = 0; tile_idx < path->tile_count; ++tile_idx)
+			{
+				PathTile *tile = &path->tiles[tile_idx];
+				draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
+			}
+#endif
+		}
+	}
+
+	arena_end_scratch(scratch);
+
+	return result;
+}
+
 AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *permanent_arena)
 {
 	AppState result = {};
@@ -155,20 +266,31 @@ AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *perma
 	result.station_types[2] = {0, 1, 1, 2, 2,  1,  2};
 	result.station_types[3] = {1, 0, 0, 1, 1, -1,  0};
 
-	result.factories = arena_push_array(permanent_arena, POPULATION_COUNT, Factory);
+	TmpArena scratch = arena_begin_scratch(NULL, 0);
 
-	//result.factories[0] = generate_factory(&result, permanent_arena);
+	Factory *unsorted_population = arena_push_array(scratch.arena, DESIRED_POPULATION_COUNT, Factory);
+
+	for(int i = 0; i < DESIRED_POPULATION_COUNT; ++i)
+	{
+		Factory factory = generate_factory(&result, permanent_arena);
+		if(factory.station_count == DESIRED_STATION_COUNT)
+		{
+			factory.fitness_score = get_fitness_score(&result, &factory);
+
+			unsorted_population[result.population_count++] = factory;
+		}
+	}
+
+	result.population = arena_push_array(permanent_arena, DESIRED_POPULATION_COUNT, Factory);
+	merge_sort_factories(result.population, unsorted_population, result.population_count);
+
+	arena_end_scratch(scratch);
 
 	return result;
 }
 
 void app_update(AppState *app, InputState *input, Arena *transient_arena)
 {
-	for(int i = 0; i < POPULATION_COUNT; ++i)
-	{
-		app->factories[i] = generate_factory(app, transient_arena);
-	}
-
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_LIGHTING);
 	glDisable(GL_DEPTH_TEST);
@@ -214,63 +336,41 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	int max_step_count = 1024;
 	if(input->keys[KEY_LEFT].held)
 	{
 		app->step_count = max(app->step_count - 1, 0);
 	}
 	if(input->keys[KEY_RIGHT].held)
 	{
-		app->step_count = min(app->step_count + 1, max_step_count);
+		app->step_count = min(app->step_count + 1, MAX_STEP_COUNT);
 	}
 
-	Factory *factory = &app->factories[0];
+	int min_fitness_score = app->population[app->population_count - 1].fitness_score;
+	int max_fitness_score = app->population[0].fitness_score;
 
-	int       target_count = factory->station_count;
-	PathTile *targets      = arena_push_array(transient_arena, target_count, PathTile);
+	int selection_fitness_score = (random(&app->rng_seed) % (max_fitness_score - min_fitness_score)) + min_fitness_score;
 
-	assert(target_count <= factory->station_count);
-	for(int i = 0; i < target_count; ++i)
+	int      selected_population_count = 0;
+	Factory *selected_population       = arena_push_array(transient_arena, app->population_count, Factory);
+
+	for(int factory_idx = 0; factory_idx < app->population_count; ++factory_idx)
 	{
-		Station *station = &factory->stations[i];
-		StationType type = app->station_types[station->type_idx];
+		Factory *factory = &app->population[factory_idx];
 
-		PathTile *target = &targets[i];
+		factory->fitness_score = get_fitness_score(app, factory);
 
-		target->x = station->x + type.door_offset_x;
-		target->y = station->y + type.door_offset_y;
+		if(factory->fitness_score >= selection_fitness_score)
+		{
+			selected_population[selected_population_count++] = *factory;
+		}
 	}
+
+	merge_sort_factories(app->population, selected_population, selected_population_count);
+	app->population_count = selected_population_count;
+
+	Factory *factory = &app->population[0];
 
 	glBegin(GL_QUADS);
-	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
-	{
-		Station *station = &factory->stations[station_idx];
-		StationType type = app->station_types[station->type_idx];
-
-		int start_x = station->x + type.door_offset_x;
-		int start_y = station->y + type.door_offset_y;
-
-		int step_count = max_step_count;
-		if(app->step_count > 0)
-		{
-			step_count = app->step_count;
-		}
-
-		int target_offset = station_idx + 1;
-		FoundPaths paths  = path_find_targets(factory->map, start_x, start_y, targets + target_offset, target_count - target_offset, step_count, transient_arena);
-
-		for(int path_idx = 0; path_idx < paths.count; ++path_idx)
-		{
-			FoundPath *path = &paths.paths[path_idx];
-
-			for(int tile_idx = 0; tile_idx < path->tile_count; ++tile_idx)
-			{
-				PathTile *tile = &path->tiles[tile_idx];
-				draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
-			}
-		}
-	}
-
 	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
 	{
 		Station *station = &factory->stations[station_idx];
@@ -319,6 +419,10 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 	app->baseline += app->font.baseline_advance;
 
 	stbsp_snprintf(text, sizeof(text), "Step Count: %d", app->step_count);
+	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
+	app->baseline += app->font.baseline_advance;
+
+	stbsp_snprintf(text, sizeof(text), "Fitness Score: %d", factory->fitness_score);
 	draw_text(&app->font, 0, app->baseline, 1, 1, 1, text);
 	app->baseline += app->font.baseline_advance;
 }
