@@ -6,9 +6,15 @@
 const int MAP_W = 128;
 const int MAP_H = 128;
 
+const int CHUNK_W = 32;
+const int CHUNK_H = 32;
+const int CHUNK_X_COUNT = MAP_W / CHUNK_W;
+const int CHUNK_Y_COUNT = MAP_H / CHUNK_H;
+const int CHUNK_PERIMETER_COUNT = (CHUNK_W * 2 + CHUNK_H * 2) - 4;
+
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 48;
-const int POPULATION_COUNT = 100;
+const int DESIRED_STATION_COUNT = 0;
+const int POPULATION_COUNT = 1;
 
 const int GLYPH_BITMAP_W = 512;
 const int GLYPH_BITMAP_H = 512;
@@ -44,9 +50,30 @@ struct Station
 
 typedef int MapTile;
 
+struct GridChunkNode
+{
+	GridChunkNode *neighbors[4];
+};
+
+struct GridChunk
+{
+	int            node_count;
+	GridChunkNode *nodes;
+};
+
+struct Map
+{
+	int w;
+	int h;
+
+	MapTile *tiles;
+};
+
 struct Factory
 {
-	MapTile *map;
+	Map map;
+
+	GridChunk *chunks;
 
 	int      station_count;
 	Station *stations;

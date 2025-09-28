@@ -79,8 +79,15 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b)
 
 Factory generate_factory(AppState *app, Arena *arena)
 {
-	Factory result  = {};
-	result.map      = arena_push_array(arena, MAP_W * MAP_H, int);
+	Factory result = {};
+
+	int map_w = MAP_W;
+	int map_h = MAP_H;
+
+	result.map.w     = map_w;
+	result.map.h     = map_h;
+	result.map.tiles = arena_push_array(arena, map_w * map_h, int);
+
 	result.stations = arena_push_array(arena, DESIRED_STATION_COUNT, Station);
 
 	for(int station_idx = 0; station_idx < DESIRED_STATION_COUNT; ++station_idx)
@@ -91,8 +98,8 @@ Factory generate_factory(AppState *app, Arena *arena)
 		int w = type.w;
 		int h = type.h;
 
-		int bound_x = MAP_W - w - 2;
-		int bound_y = MAP_H - h - 2;
+		int bound_x = map_w - w - 2;
+		int bound_y = map_h - h - 2;
 
 		if(bound_x > 0 && bound_y > 0)
 		{
@@ -113,7 +120,7 @@ regenerate_facility:
 				{
 					for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
 					{
-						if(result.map[map_y * MAP_W + map_x] == 1)
+						if(result.map.tiles[map_y * map_w + map_x] == 1)
 						{
 							goto regenerate_facility;
 						}
@@ -127,7 +134,7 @@ regenerate_facility:
 				{
 					for(int map_y = y; map_y < y + h; ++map_y)
 					{
-						result.map[map_y * MAP_W + map_x] = 1;
+						result.map.tiles[map_y * map_w + map_x] = 1;
 					}
 				}
 
@@ -138,6 +145,71 @@ regenerate_facility:
 			}
 		}
 	}
+
+	result.chunks = arena_push_array(arena, CHUNK_X_COUNT * CHUNK_Y_COUNT, GridChunk);
+
+	Arena *conflicts[] = {arena};
+	TmpArena scratch   = arena_begin_scratch(conflicts, 1);
+
+	for(int chunk_y = 0; chunk_y < CHUNK_Y_COUNT; ++chunk_y)
+	{
+		for(int chunk_x = 0; chunk_x < CHUNK_X_COUNT; ++chunk_x)
+		{
+			GridChunk *chunk = &result.chunks[chunk_y * CHUNK_Y_COUNT + chunk_x];
+
+			int perimeter_tile_count = 0;
+			PathTile *perimeter_tiles = arena_push_array(arena, CHUNK_PERIMETER_COUNT, PathTile);
+
+			int rows = CHUNK_W;
+			int cols = CHUNK_H;
+
+			for(int y = 0; y < rows; ++y)
+			{
+				PathTile *tile = &perimeter_tiles[perimeter_tile_count++];
+				tile->x = 0;
+				tile->y = y;
+			}
+
+			for(int x = 1; x < cols; ++x)
+			{
+				PathTile *tile = &perimeter_tiles[perimeter_tile_count++];
+				tile->x = x;
+				tile->y = rows - 1;
+			}
+
+			for(int y = rows - 2; y >= 0; --y)
+			{
+				PathTile *tile = &perimeter_tiles[perimeter_tile_count++];
+				tile->x = cols - 1;
+				tile->y = y;
+			}
+
+			for(int x = cols - 2; x > 1; --x)
+			{
+				PathTile *tile = &perimeter_tiles[perimeter_tile_count++];
+				tile->x = x;
+				tile->y = 0;
+			}
+
+			Map chunk_map   = {};
+
+			chunk_map.w     = CHUNK_W;
+			chunk_map.h     = CHUNK_H;
+			chunk_map.tiles = arena_push_array(scratch.arena, CHUNK_W * CHUNK_H, MapTile);
+
+			mem_copy_array(chunk_map.tiles, chunk_map.w * chunk_map.h, result.map.tiles, chunk_map.w * chunk_map.h);
+
+			for(int perimeter_tile_idx = 0; perimeter_tile_idx < perimeter_tile_count; ++perimeter_tile_idx)
+			{
+				PathTile *tile = &perimeter_tiles[perimeter_tile_idx];
+
+				int target_offset = perimeter_tile_idx + 1;
+				FoundPaths paths  = path_find_targets(&chunk_map, tile->x, tile->y, perimeter_tiles + target_offset, perimeter_tile_count - target_offset, 2048, scratch.arena);
+			}
+		}
+	}
+
+	arena_end_scratch(scratch);
 
 	return result;
 }
@@ -208,12 +280,6 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 
 	glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
 
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho(0, MAP_W, MAP_H, 0, -1, 1);
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
-
 	int max_step_count = 1024;
 	if(input->keys[KEY_LEFT].held)
 	{
@@ -225,6 +291,12 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 	}
 
 	Factory *factory = &app->factories[0];
+
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(0, factory->map.w, factory->map.h, 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
 
 	int       target_count = factory->station_count;
 	PathTile *targets      = arena_push_array(transient_arena, target_count, PathTile);
@@ -257,7 +329,7 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 		}
 
 		int target_offset = station_idx + 1;
-		FoundPaths paths  = path_find_targets(factory->map, start_x, start_y, targets + target_offset, target_count - target_offset, step_count, transient_arena);
+		FoundPaths paths  = path_find_targets(&factory->map, start_x, start_y, targets + target_offset, target_count - target_offset, step_count, transient_arena);
 
 		for(int path_idx = 0; path_idx < paths.count; ++path_idx)
 		{

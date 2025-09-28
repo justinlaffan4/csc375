@@ -60,6 +60,6 @@ void heap_heapify_up(GridNodeHeap *heap, int idx);
 void heap_insert    (GridNodeHeap *heap, GridNode *node);
 void heap_remove_min(GridNodeHeap *heap);
 
-FoundPaths path_find_targets(MapTile *map, int start_x, int start_y, PathTile *targets, int target_count, int max_step_count, Arena *arena);
-FoundPath  path_find_target (MapTile *map, int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena);
+FoundPaths path_find_targets(Map *map, int start_x, int start_y, PathTile *targets, int target_count, int max_step_count, Arena *arena);
+FoundPath  path_find_target (Map *map, int start_x, int start_y, int target_x, int target_y, int max_step_count, Arena *arena);
 
