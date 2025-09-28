@@ -77,20 +77,32 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b)
 	glVertex2f(x,     y + h);
 }
 
+bool test_bounds(int x, int y, int w, int h)
+{
+	bool result = x >= 0 && (x + h) < MAP_W && y >= 0 && (y + h) < MAP_H;
+	return result;
+}
+
 // Check for overlap (accounting for door) and return true if overlap exists
 bool test_overlap(Factory *factory, int x, int y, int w, int h)
 {
 	bool result = false;
-	for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+	if(test_bounds(x - 1, y - 1, w + 1, h + 1))
 	{
-		for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
+		for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
 		{
-			if(factory->map[map_y * MAP_W + map_x] == 1)
+			for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
 			{
-				result = true;
-				break;
+				if(factory->map[map_y * MAP_W + map_x] == 1)
+				{
+					result = true;
+					break;
+				}
 			}
 		}
+	}else
+	{
+		result = true;
 	}
 	return result;
 }
@@ -480,7 +492,7 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 				int shift_y_count = (random(&app->rng_seed) % 4) - 2;
 
 				int new_x = x + shift_x_count;
-				int new_y = y + shift_x_count;
+				int new_y = y + shift_y_count;
 
 				write_to_map(factory, x, y, w, h, 0);
 				if(!test_overlap(factory, new_x, new_y, w, h))

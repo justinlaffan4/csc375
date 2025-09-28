@@ -3,11 +3,11 @@
 #include "common.h"
 #include "platform.h"
 
-const int MAP_W = 128;
-const int MAP_H = 128;
+const int MAP_W = 64;
+const int MAP_H = 64;
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 48;
+const int DESIRED_STATION_COUNT = 24;
 const int DESIRED_POPULATION_COUNT = 100;
 
 const int GLYPH_BITMAP_W = 512;
