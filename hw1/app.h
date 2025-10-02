@@ -56,10 +56,10 @@ struct Station
 
 struct Factory
 {
-	MapTile *map;
+	MapTile map[MAP_W * MAP_H];
 
-	int      station_count;
-	Station *stations;
+	int     station_count;
+	Station stations[DESIRED_STATION_COUNT];
 
 	int fitness_score;
 };

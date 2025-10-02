@@ -152,8 +152,10 @@ void write_to_map(Factory *factory, int x, int y, int w, int h, int val)
 Factory generate_factory(AppState *app, Arena *arena)
 {
 	Factory result  = {};
+#if 0
 	result.map      = arena_push_array(arena, MAP_W * MAP_H, int);
 	result.stations = arena_push_array(arena, DESIRED_STATION_COUNT, Station);
+#endif
 
 	for(int station_idx = 0; station_idx < DESIRED_STATION_COUNT; ++station_idx)
 	{
@@ -367,35 +369,119 @@ AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *perma
 	return result;
 }
 
-struct ThreadedFitnessScore
+struct ThreadedSelection
 {
 	AppState *app;
-	int population_start;
-	int population_count;
+
+	int      population_start;
+	int      population_count;
 	Factory *selected_population;
 
 	int min_fitness_score;
 	int max_fitness_score;
 };
 
-work_queue_callback(get_fitness_score_threaded)
+work_queue_callback(threaded_selection)
 {
-	ThreadedFitnessScore *work = (ThreadedFitnessScore *)user_params;
+	ThreadedSelection *selection = (ThreadedSelection *)user_params;
 
 	int min_fitness_score = INT_MAX;
 	int max_fitness_score = 0;
+
 	int selected_population_count = 0;
-	for(int factory_idx = work->population_start; factory_idx < work->population_start + work->population_count; ++factory_idx)
+	for(int factory_idx = selection->population_start; factory_idx < selection->population_start + selection->population_count; ++factory_idx)
 	{
-		Factory *factory = &work->app->population[factory_idx];
+		Factory *factory = &selection->app->population[factory_idx];
 
-		factory->fitness_score = get_fitness_score(work->app, factory);
+		factory->fitness_score = get_fitness_score(selection->app, factory);
 
-		work->min_fitness_score = min(factory->fitness_score, min_fitness_score);
-		work->max_fitness_score = max(factory->fitness_score, max_fitness_score);
+		selection->min_fitness_score = min(factory->fitness_score, min_fitness_score);
+		selection->max_fitness_score = max(factory->fitness_score, max_fitness_score);
 
-		work->selected_population[selected_population_count++] = *factory;
+		selection->selected_population[selected_population_count++] = *factory;
 	}
+}
+
+struct ThreadedCrossover
+{
+	unsigned int rng_seed;
+
+	int desired_population_start;
+	int desired_population_count;
+
+	int      next_population_count;
+	Factory *next_population;
+
+	int      selected_population_count;
+	Factory *selected_population;
+};
+
+work_queue_callback(threaded_crossover)
+{
+	ThreadedCrossover *crossover = (ThreadedCrossover *)user_params;
+
+	//TmpArena scratch = arena_begin_scratch(NULL, 0);
+
+	for(int factory_idx = crossover->desired_population_start; factory_idx < crossover->desired_population_start + crossover->desired_population_count; ++factory_idx)
+	{
+		Factory child_factory = {};
+
+#if 0
+		child_factory.map      = arena_push_array(scratch.arena, MAP_W * MAP_H, MapTile);
+		child_factory.stations = arena_push_array(scratch.arena, DESIRED_STATION_COUNT, Station);
+#endif
+
+		int parent_factory0_idx = random(&crossover->rng_seed) % crossover->selected_population_count;
+		int parent_factory1_idx = random(&crossover->rng_seed) % crossover->selected_population_count;
+
+		Factory *parent_factory0 = &crossover->selected_population[parent_factory0_idx];
+		Factory *parent_factory1 = &crossover->selected_population[parent_factory1_idx];
+
+		if(parent_factory1->fitness_score > parent_factory0->fitness_score)
+		{
+			swap(parent_factory0, parent_factory1);
+		}
+
+		for(int station_idx = 0; station_idx < parent_factory0->station_count; ++station_idx)
+		{
+			Factory *parent_factory        = NULL;
+			Factory *backup_parent_factory = NULL;
+
+			int chance = random(&crossover->rng_seed) % 100;
+			if(chance < 80)
+			{
+				parent_factory        = parent_factory0;
+				backup_parent_factory = parent_factory1;
+			}else
+			{
+				parent_factory        = parent_factory1;
+				backup_parent_factory = parent_factory0;
+			}
+
+			Station *station        = &parent_factory->stations[station_idx];
+			Station *backup_station = &backup_parent_factory->stations[station_idx];
+
+			bool does_station_overlap        = test_overlap(&child_factory, station);
+			bool does_backup_station_overlap = test_overlap(&child_factory, backup_station);
+
+			if(!does_station_overlap)
+			{
+				write_to_map(&child_factory, station, 1);
+				child_factory.stations[child_factory.station_count++] = *station;
+			}else if(!does_backup_station_overlap)
+			{
+				write_to_map(&child_factory, backup_station, 1);
+				child_factory.stations[child_factory.station_count++] = *backup_station;
+			}
+		}
+
+		if(child_factory.station_count == DESIRED_STATION_COUNT)
+		{
+			crossover->next_population[crossover->next_population_count++] = child_factory;
+		}
+	}
+
+	//arena_end_scratch(scratch);
 }
 
 void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *transient_arena)
@@ -454,7 +540,7 @@ void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *
 		app->step_count = min(app->step_count + 1, MAX_STEP_COUNT);
 	}
 
-	ThreadedFitnessScore threaded_fitness_score[THREAD_COUNT] = {};
+	ThreadedSelection selections[THREAD_COUNT] = {};
 
 	Factory *unsorted_selected_population = arena_push_array(transient_arena, app->population_count, Factory);
 
@@ -463,18 +549,18 @@ void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *
 
 	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
 	{
-		ThreadedFitnessScore *threaded = &threaded_fitness_score[thread_idx];
-		threaded->app = app;
-		threaded->population_start = population_count_per_thread * thread_idx;
-		threaded->population_count = population_count_per_thread;
-		threaded->selected_population = unsorted_selected_population + threaded->population_start;
+		ThreadedSelection *selection  = &selections[thread_idx];
+		selection->app                 = app;
+		selection->population_start    = population_count_per_thread * thread_idx;
+		selection->population_count    = population_count_per_thread;
+		selection->selected_population = unsorted_selected_population + selection->population_start;
 
 		if(thread_idx == THREAD_COUNT - 1)
 		{
-			threaded->population_count += population_count_remainder;
+			selection->population_count += population_count_remainder;
 		}
 
-		work_queue_push_work(work_queue, get_fitness_score_threaded, threaded);
+		work_queue_push_work(work_queue, threaded_selection, selection);
 	}
 
 	work_queue_work_until_done(work_queue, 0);
@@ -483,10 +569,10 @@ void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *
 	int max_fitness_score = 0;
 	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
 	{
-		ThreadedFitnessScore *threaded = &threaded_fitness_score[thread_idx];
+		ThreadedSelection *selection = &selections[thread_idx];
 
-		min_fitness_score = min(threaded->min_fitness_score, min_fitness_score);
-		max_fitness_score = max(threaded->max_fitness_score, max_fitness_score);
+		min_fitness_score = min(selection->min_fitness_score, min_fitness_score);
+		max_fitness_score = max(selection->max_fitness_score, max_fitness_score);
 	}
 
 	int selected_population_count = app->population_count;
@@ -512,64 +598,43 @@ void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *
 	Factory *selected_population = arena_push_array(transient_arena, selected_population_count, Factory);
 	merge_sort_factories(selected_population, unsorted_selected_population, selected_population_count);
 
+	Factory *next_population_threaded = arena_push_array(transient_arena, DESIRED_POPULATION_COUNT, Factory);
+
+	int desired_population_count_per_thread = DESIRED_POPULATION_COUNT / THREAD_COUNT;
+	int desired_population_count_remainder  = DESIRED_POPULATION_COUNT % THREAD_COUNT;
+
+	ThreadedCrossover crossovers[THREAD_COUNT] = {};
+
+	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
+	{
+		ThreadedCrossover *crossover        = &crossovers[thread_idx];
+		crossover->rng_seed                 = random(&app->rng_seed);
+		crossover->desired_population_start = desired_population_count_per_thread * thread_idx;
+		crossover->desired_population_count = desired_population_count_per_thread;
+		crossover->next_population          = next_population_threaded + crossover->desired_population_start;
+
+		crossover->selected_population_count = selected_population_count;
+		crossover->selected_population       = selected_population;
+
+		if(thread_idx == THREAD_COUNT - 1)
+		{
+			crossover->desired_population_count += desired_population_count_remainder;
+		}
+
+		work_queue_push_work(work_queue, threaded_crossover, crossover);
+	}
+
+	work_queue_work_until_done(work_queue, 0);
+
 	int      next_population_count = 0;
 	Factory *next_population       = arena_push_array(transient_arena, DESIRED_POPULATION_COUNT, Factory);
 
-	for(int factory_idx = 0; factory_idx < DESIRED_POPULATION_COUNT; ++factory_idx)
+	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
 	{
-		Factory child_factory = {};
+		ThreadedCrossover *crossover = &crossovers[thread_idx];
 
-		child_factory.map      = arena_push_array(transient_arena, MAP_W * MAP_H, MapTile);
-		child_factory.stations = arena_push_array(transient_arena, DESIRED_STATION_COUNT, Station);
-
-		int parent_factory0_idx = random(&app->rng_seed) % selected_population_count;
-		int parent_factory1_idx = random(&app->rng_seed) % selected_population_count;
-
-		Factory *parent_factory0 = &selected_population[parent_factory0_idx];
-		Factory *parent_factory1 = &selected_population[parent_factory1_idx];
-
-		if(parent_factory1->fitness_score > parent_factory0->fitness_score)
-		{
-			swap(parent_factory0, parent_factory1);
-		}
-
-		for(int station_idx = 0; station_idx < parent_factory0->station_count; ++station_idx)
-		{
-			Factory *parent_factory        = NULL;
-			Factory *backup_parent_factory = NULL;
-
-			int chance = random(&app->rng_seed) % 100;
-			if(chance < 80)
-			{
-				parent_factory        = parent_factory0;
-				backup_parent_factory = parent_factory1;
-			}else
-			{
-				parent_factory        = parent_factory1;
-				backup_parent_factory = parent_factory0;
-			}
-
-			Station *station        = &parent_factory->stations[station_idx];
-			Station *backup_station = &backup_parent_factory->stations[station_idx];
-
-			bool does_station_overlap        = test_overlap(&child_factory, station);
-			bool does_backup_station_overlap = test_overlap(&child_factory, backup_station);
-
-			if(!does_station_overlap)
-			{
-				write_to_map(&child_factory, station, 1);
-				child_factory.stations[child_factory.station_count++] = *station;
-			}else if(!does_backup_station_overlap)
-			{
-				write_to_map(&child_factory, backup_station, 1);
-				child_factory.stations[child_factory.station_count++] = *backup_station;
-			}
-		}
-
-		if(child_factory.station_count == DESIRED_STATION_COUNT)
-		{
-			next_population[next_population_count++] = child_factory;
-		}
+		memcpy(next_population + next_population_count, crossover->next_population, crossover->next_population_count * sizeof(Factory));
+		next_population_count += crossover->next_population_count;
 	}
 
 	for(int factory_idx = 0; factory_idx < next_population_count; ++factory_idx)
