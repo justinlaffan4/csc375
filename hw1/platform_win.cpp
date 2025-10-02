@@ -180,7 +180,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 	LARGE_INTEGER large_rng_seed;
 	QueryPerformanceCounter(&large_rng_seed);
-	unsigned int rng_seed = 69;
+	unsigned int rng_seed = large_rng_seed.QuadPart;
 
 	Arena permanent_arena = arena_make();
 	Arena transient_arena = arena_make();

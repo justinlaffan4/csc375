@@ -26,14 +26,14 @@ Font load_font(const char *filename)
 			result.baseline_advance = font_scale * (ascent - descent + line_gap);
 
 			stbtt_pack_context pack_ctx;
-			stbtt_PackBegin(&pack_ctx, tmp_bitmap, GLYPH_BITMAP_W, GLYPH_BITMAP_H, 0, 1, NULL);
+			stbtt_PackBegin          (&pack_ctx, tmp_bitmap, GLYPH_BITMAP_W, GLYPH_BITMAP_H, 0, 1, NULL);
 			stbtt_PackSetOversampling(&pack_ctx, 2, 2);
-			stbtt_PackFontRange(&pack_ctx, ttf_buf, 0, font_pixel_size, ' ', array_count(result.char_data), result.char_data);
-			stbtt_PackEnd(&pack_ctx);
+			stbtt_PackFontRange      (&pack_ctx, ttf_buf, 0, font_pixel_size, ' ', array_count(result.char_data), result.char_data);
+			stbtt_PackEnd            (&pack_ctx);
 
-			glGenTextures(1, &result.texture);
-			glBindTexture(GL_TEXTURE_2D, result.texture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, GLYPH_BITMAP_W, GLYPH_BITMAP_H, 0, GL_ALPHA, GL_UNSIGNED_BYTE, tmp_bitmap);
+			glGenTextures  (1, &result.texture);
+			glBindTexture  (GL_TEXTURE_2D, result.texture);
+			glTexImage2D   (GL_TEXTURE_2D, 0, GL_ALPHA, GLYPH_BITMAP_W, GLYPH_BITMAP_H, 0, GL_ALPHA, GL_UNSIGNED_BYTE, tmp_bitmap);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		}
@@ -77,21 +77,29 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b)
 	glVertex2f(x,     y + h);
 }
 
-bool test_bounds(int x, int y, int w, int h)
+bool test_bounds(int x0, int y0, int x1, int y1)
 {
-	bool result = x >= 0 && (x + h) < MAP_W && y >= 0 && (y + h) < MAP_H;
+	bool point0_in_bounds = x0 >= 0 && x0 < MAP_W && y0 >= 0 && y0 < MAP_H;
+	bool point1_in_bounds = x1 >= 0 && x1 < MAP_W && y1 >= 0 && y1 < MAP_H;
+
+	bool result = point0_in_bounds && point1_in_bounds;
 	return result;
 }
 
 // Check for overlap (accounting for door) and return true if overlap exists
-bool test_overlap(Factory *factory, int x, int y, int w, int h)
+bool test_overlap(Factory *factory, Station *s)
 {
+	int x0 = s->x0 - 1;
+	int y0 = s->y0 - 1;
+	int x1 = s->x1 + 1;
+	int y1 = s->y1 + 1;
+
 	bool result = false;
-	if(test_bounds(x - 1, y - 1, w + 1, h + 1))
+	if(x0 < x1 && y0 < y1 && test_bounds(x0, y0, x1, y1))
 	{
-		for(int map_x = x - 1; map_x < x + w + 1; ++map_x)
+		for(int map_x = x0; map_x < x1; ++map_x)
 		{
-			for(int map_y = y - 1; map_y < y + h + 1; ++map_y)
+			for(int map_y = y0; map_y < y1; ++map_y)
 			{
 				if(factory->map[map_y * MAP_W + map_x] == 1)
 				{
@@ -107,15 +115,38 @@ bool test_overlap(Factory *factory, int x, int y, int w, int h)
 	return result;
 }
 
-void write_to_map(Factory *factory, int x, int y, int w, int h, int val)
+bool test_overlap(Factory *factory, int x, int y, int w, int h)
 {
-	for(int map_x = x; map_x < x + w; ++map_x)
+	Station s = {};
+	s.x0 = x;
+	s.y0 = y;
+	s.x1 = x + w;
+	s.y1 = y + h;
+
+	bool result = test_overlap(factory, &s);
+	return result;
+}
+
+void write_to_map(Factory *factory, Station *s, int val)
+{
+	for(int map_x = s->x0; map_x < s->x1; ++map_x)
 	{
-		for(int map_y = y; map_y < y + h; ++map_y)
+		for(int map_y = s->y0; map_y < s->y1; ++map_y)
 		{
 			factory->map[map_y * MAP_W + map_x] = val;
 		}
 	}
+}
+
+void write_to_map(Factory *factory, int x, int y, int w, int h, int val)
+{
+	Station s = {};
+	s.x0 = x;
+	s.y0 = y;
+	s.x1 = x + w;
+	s.y1 = y + h;
+
+	write_to_map(factory, &s, val);
 }
 
 Factory generate_factory(AppState *app, Arena *arena)
@@ -159,10 +190,23 @@ regenerate_facility:
 			{
 				write_to_map(&result, x, y, w, h, 1);
 
-				Station *station  = &result.stations[result.station_count++];
-				station->type_idx = type_idx;
-				station->x        = x;
-				station->y        = y;
+				Station *station = &result.stations[result.station_count++];
+				StationType type = app->station_types[type_idx];
+
+				station->type = type_idx;
+
+				station->r = type.r;
+				station->g = type.g;
+				station->b = type.b;
+
+				station->x0 = x;
+				station->y0 = y;
+
+				station->x1 = x + w;
+				station->y1 = y + h;
+
+				station->door_offset_x = type.door_offset_x;
+				station->door_offset_y = type.door_offset_y;
 			}
 		}
 	}
@@ -229,7 +273,7 @@ void merge_sort_factories(Factory *sorted, Factory *unsorted, int count)
 
 int get_fitness_score(AppState *app, Factory *factory)
 {
-	int result = 105000;
+	int result = 1000000;
 
 	TmpArena scratch = arena_begin_scratch(NULL, 0);
 
@@ -240,21 +284,19 @@ int get_fitness_score(AppState *app, Factory *factory)
 	for(int i = 0; i < target_count; ++i)
 	{
 		Station *station = &factory->stations[i];
-		StationType type = app->station_types[station->type_idx];
 
 		PathTile *target = &targets[i];
 
-		target->x = station->x + type.door_offset_x;
-		target->y = station->y + type.door_offset_y;
+		target->x = station->x0 + station->door_offset_x;
+		target->y = station->y0 + station->door_offset_y;
 	}
 
 	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
 	{
 		Station *station = &factory->stations[station_idx];
-		StationType type = app->station_types[station->type_idx];
 
-		int start_x = station->x + type.door_offset_x;
-		int start_y = station->y + type.door_offset_y;
+		int start_x = station->x0 + station->door_offset_x;
+		int start_y = station->y0 + station->door_offset_y;
 
 		int step_count = MAX_STEP_COUNT;
 		if(app->step_count > 0)
@@ -269,7 +311,11 @@ int get_fitness_score(AppState *app, Factory *factory)
 		{
 			FoundPath *path = &paths.paths[path_idx];
 
-			result -= path->tile_count;
+			Station *target_station = factory->stations + target_offset + path_idx;
+
+			int weight = app->station_weight_lut[station->type][target_station->type];
+
+			result -= path->tile_count * weight;
 #if 0
 			for(int tile_idx = 0; tile_idx < path->tile_count; ++tile_idx)
 			{
@@ -297,6 +343,15 @@ AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *perma
 	result.station_types[1] = {0, 1, 0, 4, 4,  4,  2};
 	result.station_types[2] = {0, 1, 1, 2, 2,  1,  2};
 	result.station_types[3] = {1, 0, 0, 1, 1, -1,  0};
+
+	int station_weight_lut[STATION_TYPE_COUNT][STATION_TYPE_COUNT] = {
+		1, 20, 30, 40,
+		20, 1, 20, 30,
+		30, 20, 1, 20,
+		40, 30, 20, 1,
+	};
+
+	memcpy(result.station_weight_lut, station_weight_lut, sizeof(station_weight_lut));
 
 	result.population = arena_push_array(permanent_arena, DESIRED_POPULATION_COUNT, Factory);
 
@@ -448,19 +503,19 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 				backup_parent_factory = parent_factory0;
 			}
 
-			Station     *station      = &parent_factory->stations[station_idx];
-			StationType *station_type = &app->station_types[station->type_idx]; 
+			Station *station        = &parent_factory->stations[station_idx];
+			Station *backup_station = &backup_parent_factory->stations[station_idx];
 
-			Station     *backup_station      = &backup_parent_factory->stations[station_idx];
-			StationType *backup_station_type = &app->station_types[backup_station->type_idx]; 
+			bool does_station_overlap        = test_overlap(&child_factory, station);
+			bool does_backup_station_overlap = test_overlap(&child_factory, backup_station);
 
-			if(!test_overlap(&child_factory, station->x, station->y, station_type->w, station_type->h))
+			if(!does_station_overlap)
 			{
-				write_to_map(&child_factory, station->x, station->y, station_type->w, station_type->h, 1);
+				write_to_map(&child_factory, station, 1);
 				child_factory.stations[child_factory.station_count++] = *station;
-			}else if(!test_overlap(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h))
+			}else if(!does_backup_station_overlap)
 			{
-				write_to_map(&child_factory, backup_station->x, backup_station->y, backup_station_type->w, backup_station_type->h, 1);
+				write_to_map(&child_factory, backup_station, 1);
 				child_factory.stations[child_factory.station_count++] = *backup_station;
 			}
 		}
@@ -477,33 +532,33 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 
 		for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
 		{
-			Station     *station      = &factory->stations[station_idx];
-			StationType *station_type = &app->station_types[station->type_idx]; 
+			Station *station = &factory->stations[station_idx];
 
 			int mutation_chance = random(&app->rng_seed) % 100;
-			if(mutation_chance < 2)
+			if(mutation_chance < 6)
 			{
-				int x = station->x;
-				int y = station->y;
-				int w = station_type->w;
-				int h = station_type->h;
+				Station new_station = *station;
 
 				int shift_x_count = (random(&app->rng_seed) % 4) - 2;
 				int shift_y_count = (random(&app->rng_seed) % 4) - 2;
 
-				int new_x = x + shift_x_count;
-				int new_y = y + shift_y_count;
+				new_station.x0 = station->x0 + shift_x_count;
+				new_station.y0 = station->y0 + shift_y_count;
 
-				write_to_map(factory, x, y, w, h, 0);
-				if(!test_overlap(factory, new_x, new_y, w, h))
+				new_station.x1 = station->x1 + shift_x_count;
+				new_station.y1 = station->y1 + shift_y_count;
+
+#if 1
+				write_to_map(factory, station, 0);
+				if(!test_overlap(factory, &new_station))
 				{
-					write_to_map(factory, new_x, new_y, w, h, 1);
-					station->x = new_x;
-					station->y = new_y;
+					write_to_map(factory, &new_station, 1);
+					*station = new_station;
 				}else
 				{
-					write_to_map(factory, x, y, w, h, 1);
+					write_to_map(factory, station, 1);
 				}
+#endif
 			}
 		}
 	}
@@ -526,21 +581,70 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
 	{
 		Station *station = &factory->stations[station_idx];
-		StationType type = app->station_types[station->type_idx];
 
-		float r = type.r;
-		float g = type.g;
-		float b = type.b;
+		float r = station->r;
+		float g = station->g;
+		float b = station->b;
 
-		int x = station->x;
-		int y = station->y;
-		int w = type.w;
-		int h = type.h;
+		int x = station->x0;
+		int y = station->y0;
+		int w = station->x1 - station->x0;
+		int h = station->y1 - station->y0;
 
 		draw_rect(x, y, w, h, r, g, b);
+	}
 
-		int door_x = x + type.door_offset_x;
-		int door_y = y + type.door_offset_y;
+	int       target_count = factory->station_count;
+	PathTile *targets      = arena_push_array(transient_arena, target_count, PathTile);
+
+	assert(target_count <= factory->station_count);
+	for(int i = 0; i < target_count; ++i)
+	{
+		Station *station = &factory->stations[i];
+
+		PathTile *target = &targets[i];
+
+		target->x = station->x0 + station->door_offset_x;
+		target->y = station->y0 + station->door_offset_y;
+	}
+
+	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
+	{
+		Station *station = &factory->stations[station_idx];
+
+		int start_x = station->x0 + station->door_offset_x;
+		int start_y = station->y0 + station->door_offset_y;
+
+		int step_count = MAX_STEP_COUNT;
+		if(app->step_count > 0)
+		{
+			step_count = app->step_count;
+		}
+
+		int target_offset = station_idx + 1;
+		FoundPaths paths  = path_find_targets(factory->map, start_x, start_y, targets + target_offset, target_count - target_offset, step_count, transient_arena);
+
+		for(int path_idx = 0; path_idx < paths.count; ++path_idx)
+		{
+			FoundPath *path = &paths.paths[path_idx];
+
+			for(int tile_idx = 0; tile_idx < path->tile_count; ++tile_idx)
+			{
+				PathTile *tile = &path->tiles[tile_idx];
+				draw_rect(tile->x, tile->y, 1, 1, 1, 1, 1);
+			}
+		}
+	}
+
+	for(int station_idx = 0; station_idx < factory->station_count; ++station_idx)
+	{
+		Station *station = &factory->stations[station_idx];
+
+		int x = station->x0;
+		int y = station->y0;
+
+		int door_x = x + station->door_offset_x;
+		int door_y = y + station->door_offset_y;
 		int door_w = 1;
 		int door_h = 1;
 

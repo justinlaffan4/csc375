@@ -1,10 +1,8 @@
 #pragma once
 
 #include "common.h"
+#include "path_find.h"
 #include "platform.h"
-
-const int MAP_W = 64;
-const int MAP_H = 64;
 
 const int STATION_TYPE_COUNT = 4;
 const int DESIRED_STATION_COUNT = 24;
@@ -38,13 +36,21 @@ struct StationType
 
 struct Station
 {
-	int type_idx;
+	int type;
 
-	int x;
-	int y;
+	float r;
+	float g;
+	float b;
+
+	int x0;
+	int y0;
+
+	int x1;
+	int y1;
+
+	int door_offset_x;
+	int door_offset_y;
 };
-
-typedef int MapTile;
 
 struct Factory
 {
@@ -64,6 +70,7 @@ struct AppState
 	unsigned int rng_seed;
 
 	StationType station_types[STATION_TYPE_COUNT];
+	int         station_weight_lut[STATION_TYPE_COUNT][STATION_TYPE_COUNT];
 	
 	int      population_count;
 	Factory *population;
