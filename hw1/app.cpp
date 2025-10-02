@@ -367,7 +367,38 @@ AppState app_make(const char *font_filename, unsigned int rng_seed, Arena *perma
 	return result;
 }
 
-void app_update(AppState *app, InputState *input, Arena *transient_arena)
+struct ThreadedFitnessScore
+{
+	AppState *app;
+	int population_start;
+	int population_count;
+	Factory *selected_population;
+
+	int min_fitness_score;
+	int max_fitness_score;
+};
+
+work_queue_callback(get_fitness_score_threaded)
+{
+	ThreadedFitnessScore *work = (ThreadedFitnessScore *)user_params;
+
+	int min_fitness_score = INT_MAX;
+	int max_fitness_score = 0;
+	int selected_population_count = 0;
+	for(int factory_idx = work->population_start; factory_idx < work->population_start + work->population_count; ++factory_idx)
+	{
+		Factory *factory = &work->app->population[factory_idx];
+
+		factory->fitness_score = get_fitness_score(work->app, factory);
+
+		work->min_fitness_score = min(factory->fitness_score, min_fitness_score);
+		work->max_fitness_score = max(factory->fitness_score, max_fitness_score);
+
+		work->selected_population[selected_population_count++] = *factory;
+	}
+}
+
+void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *transient_arena)
 {
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_LIGHTING);
@@ -423,27 +454,42 @@ void app_update(AppState *app, InputState *input, Arena *transient_arena)
 		app->step_count = min(app->step_count + 1, MAX_STEP_COUNT);
 	}
 
-	if(app->generation_count == 7)
+	ThreadedFitnessScore threaded_fitness_score[THREAD_COUNT] = {};
+
+	Factory *unsorted_selected_population = arena_push_array(transient_arena, app->population_count, Factory);
+
+	int population_count_per_thread = app->population_count / THREAD_COUNT;
+	int population_count_remainder  = app->population_count % THREAD_COUNT;
+
+	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
 	{
-		int breakpoint = 0;
+		ThreadedFitnessScore *threaded = &threaded_fitness_score[thread_idx];
+		threaded->app = app;
+		threaded->population_start = population_count_per_thread * thread_idx;
+		threaded->population_count = population_count_per_thread;
+		threaded->selected_population = unsorted_selected_population + threaded->population_start;
+
+		if(thread_idx == THREAD_COUNT - 1)
+		{
+			threaded->population_count += population_count_remainder;
+		}
+
+		work_queue_push_work(work_queue, get_fitness_score_threaded, threaded);
 	}
 
-	int      selected_population_count    = 0;
-	Factory *unsorted_selected_population = arena_push_array(transient_arena, app->population_count, Factory);
+	work_queue_work_until_done(work_queue, 0);
 
 	int min_fitness_score = INT_MAX;
 	int max_fitness_score = 0;
-	for(int factory_idx = 0; factory_idx < app->population_count; ++factory_idx)
+	for(int thread_idx = 0; thread_idx < THREAD_COUNT; ++thread_idx)
 	{
-		Factory *factory = &app->population[factory_idx];
+		ThreadedFitnessScore *threaded = &threaded_fitness_score[thread_idx];
 
-		factory->fitness_score = get_fitness_score(app, factory);
-
-		min_fitness_score = min(factory->fitness_score, min_fitness_score);
-		max_fitness_score = max(factory->fitness_score, max_fitness_score);
-
-		unsorted_selected_population[selected_population_count++] = *factory;
+		min_fitness_score = min(threaded->min_fitness_score, min_fitness_score);
+		max_fitness_score = max(threaded->max_fitness_score, max_fitness_score);
 	}
+
+	int selected_population_count = app->population_count;
 
 	// The problem with this approach is handling the case where only 1 factory makes it (which happened to me)
 	//int selection_fitness_score = (random(&app->rng_seed) % (max_fitness_score - min_fitness_score)) + min_fitness_score;

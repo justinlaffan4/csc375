@@ -5,13 +5,15 @@
 #include "platform.h"
 
 const int STATION_TYPE_COUNT = 4;
-const int DESIRED_STATION_COUNT = 24;
+const int DESIRED_STATION_COUNT = 48;
 const int DESIRED_POPULATION_COUNT = 100;
 
 const int GLYPH_BITMAP_W = 512;
 const int GLYPH_BITMAP_H = 512;
 
 const int MAX_STEP_COUNT = 1024;
+
+const int THREAD_COUNT = 4;
 
 struct Font
 {
@@ -88,4 +90,4 @@ void draw_rect(float x, float y, float w, float h, float r, float g, float b);
 Factory generate_factory(AppState *app, Arena *arena);
 
 AppState app_make  (const char *font_filename, unsigned int rng_seed, Arena *permanent_arena);
-void     app_update(AppState *app, InputState *input, Arena *transient_arena);
+void     app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *transient_arena);

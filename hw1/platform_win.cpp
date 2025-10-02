@@ -25,6 +25,71 @@
 
 InputState input;
 
+bool work_queue_do_work(WorkQueue *queue, int thread_idx)
+{
+	bool result = false;
+
+	int expected_front = queue->front;
+	int new_front      = (queue->front + 1) % array_count(queue->entries);
+	if(expected_front != queue->back)
+	{
+		int exchanged_front = InterlockedCompareExchange(&queue->front, new_front, expected_front);
+		if(exchanged_front == expected_front)
+		{
+			WorkQueueEntry *entry = &queue->entries[exchanged_front];
+			entry->callback(entry->user_params, thread_idx);
+
+			InterlockedDecrement(&queue->entry_count);
+			result = true;
+		}
+	}
+
+	return result;
+}
+
+void work_queue_push_work(WorkQueue *queue, WorkQueueCallback callback, void *user_params)
+{
+	if(queue->entry_count < array_count(queue->entries))
+	{
+		WorkQueueEntry *entry = &queue->entries[queue->back];
+		entry->callback       = callback;
+		entry->user_params    = user_params;
+
+		queue->back = (queue->back + 1) % array_count(queue->entries);
+
+		InterlockedIncrement(&queue->entry_count);
+
+		LONG prev_count;
+		ReleaseSemaphore(queue->semaphore, 1, &prev_count);
+	}
+}
+
+void work_queue_work_until_done(WorkQueue *queue, int thread_idx)
+{
+	while(queue->entry_count > 0)
+	{
+		work_queue_do_work(queue, thread_idx);
+	}
+}
+
+DWORD WINAPI thread_proc(LPVOID param)
+{
+	ThreadInfo *info = (ThreadInfo *)param;
+
+	DWORD id = GetCurrentThreadId();
+
+	for(;;)
+	{
+		if(!work_queue_do_work(info->queue, info->idx))
+		{
+			WaitForSingleObject(info->queue->semaphore, INFINITE); // Put thread to sleep and wait for signal to wake up
+		}
+	}
+
+	return 0;
+}
+
+
 uint64_t vmem_page_size()
 {
 	uint64_t result = 4096;
@@ -118,6 +183,24 @@ LRESULT win_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param)
 
 int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int show_cmd)
 {
+	ThreadInfo thread_infos[THREAD_COUNT - 1] = {};
+	int thread_count = array_count(thread_infos);
+
+	WorkQueue work_queue = {};
+
+	work_queue.semaphore = CreateSemaphore(NULL, 0, thread_count, NULL);
+
+	for(int thread_idx = 0; thread_idx < thread_count; ++thread_idx)
+	{
+		ThreadInfo *info = &thread_infos[thread_idx];
+		info->idx        = thread_idx + 1;
+		info->queue      = &work_queue;
+
+		DWORD id;
+		HANDLE handle = CreateThread(NULL, 0, thread_proc, info, 0, &id);
+		CloseHandle(handle);
+	}
+
 	WNDCLASSEX wc    = {};
 	wc.cbSize        = sizeof(wc);
 	wc.style         = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
@@ -221,7 +304,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int sho
 
 		win_get_client_dim(window, &input.client_w, &input.client_h);
 
-		app_update(&app, &input, &transient_arena);
+		app_update(&app, &input, &work_queue, &transient_arena);
 
 		SwapBuffers(device_ctx);
 

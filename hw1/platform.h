@@ -1,5 +1,33 @@
 #pragma once
 
+#define work_queue_callback(name) void (name)(void *user_params, int thread_idx)
+typedef work_queue_callback(*WorkQueueCallback);
+
+struct WorkQueueEntry
+{
+	WorkQueueCallback  callback;
+	void              *user_params;
+};
+
+// Single producer multiple consumer
+struct WorkQueue
+{
+	HANDLE semaphore;
+
+	volatile uint32_t front, back;
+	volatile uint32_t entry_count;
+	WorkQueueEntry    entries[256];
+};
+
+struct ThreadInfo
+{
+	int        idx;
+	WorkQueue *queue;
+};
+
+void work_queue_push_work(WorkQueue *queue, WorkQueueCallback callback, void *user_params);
+void work_queue_work_until_done(WorkQueue *queue, int thread_idx);
+
 enum KeyMap
 {
 	KEY_LEFT    = VK_LEFT,

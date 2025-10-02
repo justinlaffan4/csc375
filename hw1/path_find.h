@@ -2,8 +2,8 @@
 
 #include "common.h"
 
-const int MAP_W = 64;
-const int MAP_H = 64;
+const int MAP_W = 128;
+const int MAP_H = 128;
 
 const int GRID_NODE_HEAP_CAPACITY = MAP_W * MAP_H;
 
