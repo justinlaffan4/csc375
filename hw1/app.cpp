@@ -414,6 +414,10 @@ struct ThreadedCrossover
 
 	int      selected_population_count;
 	Factory *selected_population;
+
+	volatile uint32_t  shared_population_front, shared_population_back;
+	volatile uint32_t  shared_population_count;
+	Factory           *shared_population;
 };
 
 work_queue_callback(threaded_crossover)
@@ -436,6 +440,26 @@ work_queue_callback(threaded_crossover)
 
 		Factory *parent_factory0 = &crossover->selected_population[parent_factory0_idx];
 		Factory *parent_factory1 = &crossover->selected_population[parent_factory1_idx];
+
+		int take_from_shared_population_chance = random(&crossover->rng_seed) % 100;
+		if(take_from_shared_population_chance < 10)
+		{
+			int expected_front = crossover->shared_population_front;
+			while(expected_front != crossover->shared_population_back)
+			{
+				int new_front       = (crossover->shared_population_front + 1) % DESIRED_POPULATION_COUNT;
+				int exchanged_front = InterlockedCompareExchange(&crossover->shared_population_front, new_front, expected_front);
+				if(exchanged_front == expected_front)
+				{
+					parent_factory0 = &crossover->shared_population[exchanged_front];
+
+					InterlockedDecrement(&crossover->shared_population_count);
+					break;
+				}
+
+				expected_front = crossover->shared_population_front;
+			}
+		}
 
 		if(parent_factory1->fitness_score > parent_factory0->fitness_score)
 		{
@@ -478,6 +502,20 @@ work_queue_callback(threaded_crossover)
 		if(child_factory.station_count == DESIRED_STATION_COUNT)
 		{
 			crossover->next_population[crossover->next_population_count++] = child_factory;
+
+			while(crossover->shared_population_count < DESIRED_POPULATION_COUNT)
+			{
+				int expected_back  = crossover->shared_population_back;
+				int new_back       = (crossover->shared_population_back + 1) % DESIRED_POPULATION_COUNT;
+				int exchanged_back = InterlockedCompareExchange(&crossover->shared_population_back, new_back, expected_back);
+				if(exchanged_back == expected_back)
+				{
+					crossover->shared_population[exchanged_back] = child_factory;
+
+					InterlockedIncrement(&crossover->shared_population_count);
+					break;
+				}
+			}
 		}
 	}
 
@@ -615,6 +653,8 @@ void app_update(AppState *app, InputState *input, WorkQueue *work_queue, Arena *
 
 		crossover->selected_population_count = selected_population_count;
 		crossover->selected_population       = selected_population;
+
+		crossover->shared_population = arena_push_array(transient_arena, DESIRED_POPULATION_COUNT, Factory);
 
 		if(thread_idx == THREAD_COUNT - 1)
 		{

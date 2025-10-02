@@ -29,7 +29,8 @@ bool work_queue_do_work(WorkQueue *queue, int thread_idx)
 {
 	bool result = false;
 
-	for(int expected_front = queue->front; expected_front != queue->back; )
+	int expected_front = queue->front;
+	while(expected_front != queue->back)
 	{
 		int new_front       = (queue->front + 1) % array_count(queue->entries);
 		int exchanged_front = InterlockedCompareExchange(&queue->front, new_front, expected_front);
@@ -42,6 +43,8 @@ bool work_queue_do_work(WorkQueue *queue, int thread_idx)
 			result = true;
 			break;
 		}
+
+		expected_front = queue->front;
 	}
 
 	return result;
